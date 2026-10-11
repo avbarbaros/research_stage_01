@@ -11,6 +11,65 @@ A hand-written VLM: frozen vision encoder → trainable projector → frozen LLM
 | Projector | `Linear(1024→1536) → GELU → Linear(1536→1536)` |
 | LLM | `Qwen/Qwen2.5-1.5B-Instruct` |
 
+### Architecture and tensor shapes
+
+Shapes are for the default configuration with a batch of `B` samples, sequence length `T`, and `S` supervised positions in the batch.
+
+```mermaid
+flowchart TD
+    IMG["Image<br/>pixel_values [B, 3, 224, 224]"]
+    TXT["Prompt + answer tokens<br/>input_ids [B, T]<br/>256 image_pad slots per sample"]
+
+    CLIP["CLIP ViT-L/14 vision encoder<br/>hidden_states[-2] → [B, 257, 1024]"]:::frozen
+    DROP["Drop CLS token<br/>[B, 256, 1024]"]:::op
+    PROJ["Projector<br/>Linear 1024→1536 · GELU · Linear 1536→1536<br/>[B, 256, 1536]"]:::trainable
+
+    EMB["Qwen2.5 token embedding table<br/>[B, T, 1536]"]:::frozen
+    SPLICE["Splice: overwrite the image_pad rows<br/>with the projected patches<br/>inputs_embeds [B, T, 1536]"]:::op
+
+    LLM["Qwen2.5-1.5B decoder, 28 layers<br/>last hidden state [B, T, 1536]"]:::frozen
+    SEL["Keep supervised positions only<br/>[S, 1536]"]:::op
+    HEAD["LM head<br/>logits [S, 151936]"]:::frozen
+    LOSS["Cross-entropy with labels<br/>(answer tokens only)"]:::op
+
+    IMG --> CLIP --> DROP --> PROJ --> SPLICE
+    TXT --> EMB --> SPLICE
+    SPLICE --> LLM --> SEL --> HEAD --> LOSS
+
+    classDef frozen fill:#dbe4ff,stroke:#4263eb,color:#000
+    classDef trainable fill:#ffd8a8,stroke:#e8590c,color:#000,stroke-width:3px
+    classDef op fill:#f1f3f5,stroke:#868e96,color:#000
+```
+
+Blue blocks are frozen, the orange block is the only one trained (3.94M parameters), grey blocks are operations without weights. The loss gradient flows back through the frozen LLM to reach the projector, which is why the LLM's activations dominate GPU memory even though its weights never change.
+
+Measured with `scripts/04_trace_shapes.py` on one real batch (`B = 4`, `T = 482`, `S = 433`):
+
+| Tensor | Shape | Notes |
+|---|---|---|
+| `pixel_values` | `[4, 3, 224, 224]` | CLIP preprocessing: resize and centre-crop to 224 px |
+| encoder `hidden_states[-2]` | `[4, 257, 1024]` | 1 CLS + 16×16 patches of 14 px, penultimate layer |
+| patch features | `[4, 256, 1024]` | CLS dropped |
+| projector output | `[4, 256, 1536]` | now in the LLM's embedding space |
+| `input_ids` | `[4, 482]` | longest sequence in the batch; shorter ones are padded |
+| text embeds | `[4, 482, 1536]` | embedding lookup, including the placeholder slots |
+| `inputs_embeds` after splice | `[4, 482, 1536]` | 256 placeholder rows per sample replaced by patches |
+| LLM last hidden state | `[4, 482, 1536]` | |
+| `labels` | `[4, 482]` | `-100` everywhere except answer tokens |
+| logits | `[433, 151936]` | supervised positions only, not `[4, 482, 151936]` |
+
+One training sequence, with the 256 image slots collapsed. Only the assistant's answer and its closing `<|im_end|>` are supervised:
+
+```text
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+<|vision_start|><|image_pad|>x256<|vision_end|>
+What is this photo about?<|im_end|>
+<|im_start|>assistant
+The image features a group of people gathered together in a cozy living room ...<|im_end|>
+```
+
 ### Run from a terminal (Colab L4)
 
 ```bash
