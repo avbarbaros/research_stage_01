@@ -1,0 +1,59 @@
+# Settings for E1.1 (minimal VLM). Every script and module reads this file.
+# Precedence: command-line flag > environment variable (paths only) > this file.
+# Use another file with `--config other.yaml` on any script or module.
+
+paths:
+  data_dir: /content/data                          # datasets and images (local disk; env DATA_DIR)
+  runs_dir: /content/drive/MyDrive/e1_1_minivlm    # checkpoints, logs, results (env RUNS_DIR)
+  runs_dir_fallback: runs                          # used when runs_dir is on Google Drive and Drive is not mounted
+  run_name: main_clip_qwen1.5b                     # main run directory inside runs_dir (env RUN_NAME)
+  # Relative paths are resolved against the repository root.
+
+model:
+  encoder: clip                      # clip | siglip | dinov2 | clip-b32 (CPU debugging); see minivlm/config.py
+  llm: Qwen/Qwen2.5-1.5B-Instruct
+  feature_layer: -2                  # vision encoder hidden state fed to the projector (penultimate)
+  projector: mlp2                    # mlp2 | linear
+  projector_hidden: 0                # 0 = LLM hidden size; a small value makes a bottleneck
+  grad_checkpointing: false          # slower, less GPU memory
+
+data:
+  subset: main                       # name of the prepared subset inside data_dir
+  n_total: 50000                     # training samples
+  n_holdout: 500                     # held-out detail descriptions, split by image
+  detail_fraction: 0.46              # share of detail descriptions; the rest are conversations
+  max_text_tokens: 256               # token budget per sample, image tokens not counted
+  seed: 0
+  download_workers: 32
+
+train:
+  lr: 1.0e-3
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  batch_size: 16
+  accum: 2                           # gradient accumulation; effective batch = batch_size * accum
+  epochs: 1
+  max_grad_norm: 1.0
+  seed: 0
+  save_every: 500                    # optimiser steps
+  log_every: 10                      # optimiser steps
+  num_workers: 4
+
+smoke:                               # scripts/03_smoke_test.py
+  subset: smoke
+  run_name: smoke
+  llm: Qwen/Qwen2.5-0.5B-Instruct
+  n_total: 500
+  n_holdout: 50
+  batch_size: 8
+  accum: 2
+  max_steps: 30
+  log_every: 5
+
+eval:
+  batch_size: 16
+  num_workers: 4
+  caption_n: 200                     # COCO val2017 images to caption
+  max_new_tokens: 128                # for the detailed-description prompt
+  cider: true
+  seed: 0
