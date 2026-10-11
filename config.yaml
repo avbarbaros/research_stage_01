@@ -3,10 +3,10 @@
 # Use another file with `--config other.yaml` on any script or module.
 
 paths:
-  data_dir: /content/data                          # datasets and images (local disk; env DATA_DIR)
-  runs_dir: /content/drive/MyDrive/e1_1_minivlm    # checkpoints, logs, results (env RUNS_DIR)
-  runs_dir_fallback: runs                          # used when runs_dir is on Google Drive and Drive is not mounted
-  run_name: main_clip_qwen1.5b                     # main run directory inside runs_dir (env RUN_NAME)
+  data_dir: /content/data                                        # datasets and images (local disk; env DATA_DIR)
+  runs_dir: /content/drive/MyDrive/MMRM/stage_01/e1_1_minivlm    # checkpoints, logs, results (env RUNS_DIR)
+  runs_dir_fallback: runs                                        # used when runs_dir is on Google Drive and Drive is not mounted
+  run_name: main_clip_qwen1.5b                                   # main run directory inside runs_dir (env RUN_NAME)
   # Relative paths are resolved against the repository root.
 
 model:
