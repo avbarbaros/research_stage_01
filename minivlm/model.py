@@ -8,11 +8,15 @@ The vision-language interface, for the default config and batch size B:
     projector                [B, 256, 1536]   LLM hidden size
     text embeds              [B, T, 1536]     T includes 256 <|image_pad|> slots
     after splice             [B, T, 1536]     image_pad rows replaced
-    logits                   [B, T, vocab]
+    LLM last hidden state    [B, T, 1536]
+    logits                   [S, vocab]       S = supervised positions in the batch
 """
+
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .config import Config
 
@@ -139,13 +143,32 @@ class MiniVLM(nn.Module):
         return inputs_embeds
 
     def forward(self, input_ids, attention_mask, pixel_values, labels=None, trace=None):
+        """With labels: returns .loss and .logits for the supervised positions only.
+
+        The vocabulary projection is the single largest tensor in the model
+        ([B, T, 151936]), and most positions (system prompt, image slots,
+        questions, padding) carry no loss, so the LM head is applied only where
+        a label exists. The loss equals the usual shifted cross-entropy.
+        """
         inputs_embeds = self.embed(input_ids, pixel_values, trace)
-        out = self.llm(inputs_embeds=inputs_embeds, attention_mask=attention_mask, labels=labels)
+        if labels is None:
+            out = self.llm(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
+            if trace is not None:
+                trace["logits"] = tuple(out.logits.shape)
+            return out
+
+        hidden = self.llm.base_model(
+            inputs_embeds=inputs_embeds, attention_mask=attention_mask
+        ).last_hidden_state
+        targets = labels[:, 1:]  # position t predicts token t+1
+        keep = targets != -100
+        logits = self.llm.get_output_embeddings()(hidden[:, :-1][keep])
+        loss = F.cross_entropy(logits.float(), targets[keep])
         if trace is not None:
-            trace["logits"] = tuple(out.logits.shape)
-            if labels is not None:
-                trace["labels"] = tuple(labels.shape)
-        return out
+            trace["LLM last hidden state"] = tuple(hidden.shape)
+            trace["labels"] = tuple(labels.shape)
+            trace["logits (supervised positions only)"] = tuple(logits.shape)
+        return SimpleNamespace(loss=loss, logits=logits)
 
     @torch.no_grad()
     def generate(self, input_ids, attention_mask, pixel_values, **gen_kwargs):

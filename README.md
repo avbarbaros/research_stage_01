@@ -31,7 +31,7 @@ python scripts/10_show_results.py    # results + <run>/captions_grid.png
 
 All paths and hyper-parameters are in [config.yaml](config.yaml). Precedence is command-line flag > environment variable (paths only) > `config.yaml`.
 
-- One-off override: scripts 03, 05, 06, 08 and 09 pass extra arguments to the underlying module, e.g. `python scripts/06_train.py --batch_size 8 --accum 4`.
+- One-off override: scripts 03, 05, 06, 08 and 09 pass extra arguments to the underlying module, e.g. `python scripts/06_train.py --batch_size 4 --accum 8`.
 - Another settings file: add `--config other.yaml` to any script or module.
 - Each run saves the model and optimisation settings it used to `<run>/config.json`; evaluation reads the model from there, not from `config.yaml`.
 
@@ -40,7 +40,7 @@ All paths and hyper-parameters are in [config.yaml](config.yaml). Precedence is 
 | Key | Default | Meaning |
 |---|---|---|
 | `data_dir` | `/content/data` | Datasets and images, on local disk. Env: `DATA_DIR`. |
-| `runs_dir` | `/content/drive/MyDrive/e1_1_minivlm` | Checkpoints, logs, results. Env: `RUNS_DIR`. |
+| `runs_dir` | `/content/drive/MyDrive/MMRM/stage_01/e1_1_minivlm` | Checkpoints, logs, results. Env: `RUNS_DIR`. |
 | `runs_dir_fallback` | `runs` | Used when `runs_dir` is on Google Drive and Drive is not mounted. |
 | `run_name` | `main_clip_qwen1.5b` | Main run directory inside `runs_dir`. Env: `RUN_NAME`. |
 
@@ -76,8 +76,8 @@ Relative paths are resolved against the repository root. Drive can only be mount
 | `lr` | `1.0e-3` | Peak learning rate (AdamW, cosine decay). |
 | `weight_decay` | `0.0` | |
 | `warmup_ratio` | `0.03` | Fraction of optimiser steps used for linear warmup. |
-| `batch_size` | `16` | Samples per forward pass. |
-| `accum` | `2` | Gradient accumulation; effective batch is `batch_size * accum`. |
+| `batch_size` | `8` | Samples per forward pass. 16 does not fit a 22 GB L4 with the 1.5B LLM. |
+| `accum` | `4` | Gradient accumulation; effective batch is `batch_size * accum`. |
 | `epochs` | `1` | |
 | `max_grad_norm` | `1.0` | Gradient clipping. |
 | `seed` | `0` | Seed for initialisation and data order. |
@@ -120,7 +120,7 @@ python -m minivlm.eval caption   --out_dir runs/main
 pytest tests                                            # CPU, tiny random models
 ```
 
-Defaults come from `config.yaml`; every setting also has a flag (`--help`). Useful training flags: `--encoder {clip,siglip,dinov2}` (E1.2), `--projector linear`, `--projector_hidden 64` (bottleneck), `--batch_size 8 --accum 4` or `--grad_checkpointing` if memory is short. `--encoder clip-b32` is a small encoder for debugging on CPU.
+Defaults come from `config.yaml`; every setting also has a flag (`--help`). Useful training flags: `--encoder {clip,siglip,dinov2}` (E1.2), `--projector linear`, `--projector_hidden 64` (bottleneck), `--batch_size 4 --accum 8` or `--grad_checkpointing` if memory is short. `--encoder clip-b32` is a small encoder for debugging on CPU.
 
 ### Layout
 

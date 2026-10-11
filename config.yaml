@@ -30,8 +30,8 @@ train:
   lr: 1.0e-3
   weight_decay: 0.0
   warmup_ratio: 0.03
-  batch_size: 16
-  accum: 2                           # gradient accumulation; effective batch = batch_size * accum
+  batch_size: 8                      # 16 does not fit a 22 GB L4 with the 1.5B LLM
+  accum: 4                           # gradient accumulation; effective batch = batch_size * accum
   epochs: 1
   max_grad_norm: 1.0
   seed: 0

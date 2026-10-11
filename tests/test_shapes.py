@@ -37,8 +37,22 @@ def test_interface_shapes():
     assert trace["patch features (prefix dropped)"] == (3, N_IMG, VISION_DIM)
     assert trace["projector output"] == (3, N_IMG, LLM_DIM)
     assert trace["inputs_embeds (after splice)"] == (3, 12, LLM_DIM)
-    assert trace["logits"] == (3, 12, VOCAB)
+    assert trace["LLM last hidden state"] == (3, 12, LLM_DIM)
+    assert trace["logits (supervised positions only)"] == (3 * 4, VOCAB)  # labels[:, 8:]
     assert torch.isfinite(out.loss)
+
+
+def test_loss_matches_full_vocabulary_loss():
+    model, batch = tiny_vlm(), tiny_batch()
+    batch["labels"][0, 10:] = IGNORE  # uneven number of supervised tokens per row
+    ours = model(**batch).loss
+    reference = model.llm(
+        inputs_embeds=model.embed(batch["input_ids"], batch["pixel_values"]),
+        attention_mask=batch["attention_mask"], labels=batch["labels"]).loss
+    assert torch.allclose(ours, reference, atol=1e-5)
+
+    logits = model(batch["input_ids"], batch["attention_mask"], batch["pixel_values"]).logits
+    assert logits.shape == (3, 12, VOCAB)
 
 
 def test_only_projector_trains():

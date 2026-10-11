@@ -78,8 +78,8 @@ class Config:
     lr: float = 1e-3
     weight_decay: float = 0.0
     warmup_ratio: float = 0.03
-    batch_size: int = 16
-    accum: int = 2
+    batch_size: int = 8
+    accum: int = 4
     epochs: int = 1
     max_grad_norm: float = 1.0
     seed: int = 0
