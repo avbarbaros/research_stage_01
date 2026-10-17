@@ -119,7 +119,10 @@ def check_resize_rule(height: int, width: int, budget: int):
 
 
 def run(args):
-    os.environ.setdefault("LMUData", args.lmu_dir)
+    # VLMEvalKit only uses $LMUData if the directory already exists.
+    lmu_dir = os.path.expanduser(args.lmu_dir)
+    os.makedirs(lmu_dir, exist_ok=True)
+    os.environ["LMUData"] = lmu_dir
     os.makedirs(args.work_dir, exist_ok=True)
     if use_sdpa_without_flash_attn():
         print("flash-attn not installed: using PyTorch SDPA attention")

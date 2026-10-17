@@ -69,7 +69,7 @@ resolution:                          # E1.3: scripts/15-17
   n_per_dataset: 300                 # seeded subset per dataset (MMBench: question groups); 0 = all
   max_new_tokens: 128
   seed: 0
-  lmu_dir: /content/LMUData          # where VLMEvalKit downloads datasets (local disk)
+  lmu_dir: ~/LMUData                 # where VLMEvalKit downloads datasets (its default; local disk on Colab)
   run_name: e1_3_qwen2.5vl7b         # directory inside paths.runs_dir
   quick_check_budgets: [64, 1024]    # scripts/16_resolution_quick_check.py
   quick_check_n: 20
