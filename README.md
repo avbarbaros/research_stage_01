@@ -206,6 +206,8 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 
 ### Layout
 
+- [docs/MiniVLM_E1.1_E1.2.md](docs/MiniVLM_E1.1_E1.2.md) — full write-up of E1.1 and E1.2: architecture, training, every evaluation and the results.
+
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
 - [minivlm/benchmarks.py](minivlm/benchmarks.py) — MMVP and A-OKVQA loaders.
