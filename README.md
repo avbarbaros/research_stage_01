@@ -86,6 +86,7 @@ python scripts/09_eval_captions.py   # 200 COCO val captions + CIDEr
 python scripts/10_show_results.py    # results + <run>/captions_grid.png
 python scripts/11_eval_reference_likelihood.py  # loss of the COCO reference captions, correct vs other image
 python scripts/12_compare_runs.py RUN_A RUN_B ...  # paired comparison of runs, e.g. encoders (E1.2)
+python scripts/13_eval_options.py    # MMVP + A-OKVQA by option likelihood; re-run 12 afterwards
 ```
 
 ### Settings
@@ -177,6 +178,13 @@ CIDEr is reported three ways, each with a 95% bootstrap interval over images: on
 
 `11_eval_reference_likelihood.py` scores the same images without generating anything: the loss per token of their five COCO reference captions under the short-caption prompt, once with the correct image and once with the next image in the list. If an encoder gives the references a low loss but its generated captions score poorly, its features carry the information and the problem is in decoding; if the references also get a high loss, the features suit short captions less. `12_compare_runs.py` compares both results across runs, pairing scores image by image, and saves `<runs_dir>/comparison.json`.
 
+`13_eval_options.py` scores two multiple-choice benchmarks without generating anything: each option is written as the answer to "<question> Answer the question using a single word or phrase.", and the option with the lowest loss is the prediction. Every option has the same format, so the output-format prior that distorts the caption metrics largely cancels. Accuracy is reported with two scores (summed loss, which favours short options, and loss per token) and with a blank image, which shows what the language prior alone achieves.
+
+- **MMVP**: 150 pairs of images that CLIP embeds almost identically but that differ visibly; both questions of a pair are the same, with opposite answers. Pair accuracy (both right) is the standard metric; chance is 25%, and a model that ignores the image scores 0.
+- **A-OKVQA** validation: 1,145 questions on COCO val2017 images, four options each (chance 25%).
+
+Both are downloaded from the Hugging Face Hub on first use. `12_compare_runs.py` includes them once every run has `options_mmvp.json` / `options_aokvqa.json`.
+
 ### Underlying modules
 
 ```bash
@@ -186,6 +194,7 @@ python -m minivlm.eval grounding --out_dir runs/main    # correct vs shuffled vs
 python -m minivlm.eval caption   --out_dir runs/main
 python -m minivlm.eval rescore   --out_dir runs/main    # recompute caption metrics, no GPU
 python -m minivlm.eval reference --out_dir runs/main    # reference-caption likelihood
+python -m minivlm.eval options   --out_dir runs/main    # MMVP + A-OKVQA option likelihood
 python -m minivlm.compare runs/a runs/b --names a b     # paired comparison of runs
 pytest tests                                            # CPU, tiny random models
 ```
@@ -196,5 +205,6 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
-- [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants and bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
+- [minivlm/benchmarks.py](minivlm/benchmarks.py) — MMVP and A-OKVQA loaders.
+- [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants, likelihood and multiple-choice measures, bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
 - [minivlm/train.py](minivlm/train.py), [minivlm/eval.py](minivlm/eval.py), [minivlm/config.py](minivlm/config.py)

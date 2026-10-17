@@ -224,6 +224,83 @@ def format_likelihood(m: dict) -> str:
     return "\n".join(lines)
 
 
+# Multiple-choice benchmarks scored by option likelihood. Per item, the files
+# written by `eval options` hold the summed loss of each option (its tokens and
+# the closing <|im_end|>) with the real image and with a blank image.
+#   sum:  pick the option with the lowest summed loss (favours short options)
+#   mean: pick the option with the lowest loss per token
+# With a blank image the model sees only the question, so that accuracy is
+# what the language prior alone achieves.
+
+def option_correct(item: dict, condition: str = "image", norm: str = "sum") -> int:
+    nll = item[f"nll_{condition}"]
+    scores = [x / n if norm == "mean" else x for x, n in zip(nll, item["n_tokens"])]
+    return int(min(range(len(scores)), key=scores.__getitem__) == item["answer"])
+
+
+def _option_measures(items: list) -> dict:
+    """{measure: (description, list of 0/1 per unit)}; units are items or pairs."""
+    measures = {}
+    for norm in ["sum", "mean"]:
+        for cond, label in [("image", "image"), ("blank", "blank image (language prior)")]:
+            suffix = "" if cond == "image" else "_blank"
+            measures[f"acc_{norm}{suffix}"] = (
+                f"accuracy, {norm} score, {label}",
+                [option_correct(it, cond, norm) for it in items])
+    if all(it.get("group") is not None for it in items):
+        groups = {}
+        for it in items:
+            groups.setdefault(it["group"], []).append(it)
+        for norm in ["sum", "mean"]:
+            measures[f"pair_acc_{norm}"] = (
+                f"pair accuracy (all questions of a pair right), {norm} score, image",
+                [int(all(option_correct(it, "image", norm) for it in g))
+                 for g in groups.values()])
+    return measures
+
+
+def options_summary(items: list, n_bootstrap: int = 5000, seed: int = 0) -> dict:
+    summary = {name: bootstrap(values, n_bootstrap, seed)
+               for name, (_, values) in _option_measures(items).items()}
+    summary["n_items"] = len(items)
+    summary["chance"] = float(sum(1 / len(it["n_tokens"]) for it in items) / len(items))
+    return summary
+
+
+def paired_options_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
+    """Compare runs on the same benchmark, item by item (or pair by pair).
+
+    runs: {run name: per-item list from options_<benchmark>.json}.
+    """
+    ids = [{it["id"] for it in items} for items in runs.values()]
+    common = set.intersection(*ids)
+    aligned = {name: sorted((it for it in items if it["id"] in common), key=lambda it: it["id"])
+               for name, items in runs.items()}
+    per_run = {name: _option_measures(items) for name, items in aligned.items()}
+    first = next(iter(per_run.values()))
+    result = dict(n_items=len(common), metrics={})
+    for m, (description, _) in first.items():
+        values = {name: per_run[name][m][1] for name in runs}
+        result["metrics"][m] = dict(
+            description=description,
+            per_run={name: bootstrap(v, n_bootstrap, seed) for name, v in values.items()},
+            pairs={f"{a} - {b}": bootstrap([x - y for x, y in zip(values[a], values[b])],
+                                           n_bootstrap, seed)
+                   for a, b in combinations(runs, 2)},
+        )
+    return result
+
+
+def format_options(s: dict) -> str:
+    lines = []
+    for name in s:
+        if isinstance(s[name], dict):
+            lines.append(f"{name:18s} {format_ci(s[name])}")
+    lines.append(f"({s['n_items']} items; chance {s['chance']:.3f} per question; "
+                 "95% bootstrap intervals)")
+    return "\n".join(lines)
+
+
 def format_ci(ci: dict | None) -> str:
     if ci is None:
         return "n/a"

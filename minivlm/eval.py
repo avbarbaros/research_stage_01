@@ -4,6 +4,7 @@
     python -m minivlm.eval caption   --data_dir /content/data --out_dir <run dir> --n 50 --cider
     python -m minivlm.eval rescore   --out_dir <run dir>
     python -m minivlm.eval reference --data_dir /content/data --out_dir <run dir>
+    python -m minivlm.eval options   --out_dir <run dir> --benchmarks mmvp aokvqa
 
 grounding: loss on held-out descriptions with the correct image, another
            sample's image, and a blank image. A grounded model has a clearly
@@ -16,6 +17,10 @@ reference: loss of the COCO reference captions of the same images, given the
            also split into the caption's words and its closing <|im_end|>.
            Separates "the image features lack the information" from "the
            model does not write it": no generation is involved.
+options:   multiple-choice benchmarks (MMVP, A-OKVQA) scored by option
+           likelihood, with the real and with a blank image. No generation,
+           and every option has the same format, so the format prior that
+           distorts caption metrics largely cancels.
 """
 
 import argparse
@@ -31,13 +36,16 @@ from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoTokenizer
 
 from .config import Config, yaml_from_argv
+from .benchmarks import BENCHMARKS, open_image
 from .data import (Collator, LlavaDataset, build_prompt, download_coco_images,
                    encode_conversation, load_coco_val_captions, subset_paths)
-from .metrics import caption_metrics, format_likelihood, format_metrics, likelihood_summary
+from .metrics import (caption_metrics, format_likelihood, format_metrics, format_options,
+                      likelihood_summary, options_summary)
 from .model import MiniVLM
 
 SHORT_PROMPT = "Describe the image in one short sentence."
 DETAIL_PROMPT = "Describe the image in detail."
+ANSWER_PROMPT = "Answer the question using a single word or phrase."  # LLaVA-1.5's short-answer prompt
 
 
 def load_run(out_dir: str, device: str):
@@ -202,6 +210,56 @@ def reference(args, device):
     print(format_likelihood(summary))
 
 
+@torch.no_grad()
+def options(args, device):
+    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
+    collate = Collator(tokenizer.pad_token_id)
+    im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+
+    for bench in args.benchmarks:
+        items = BENCHMARKS[bench]()
+        if args.max_items:
+            items = items[: args.max_items]
+        results = []
+        for start in range(0, len(items), args.batch_size):
+            chunk = items[start: start + args.batch_size]
+            seqs, owners = [], []
+            for k, it in enumerate(chunk):
+                pixel_values = image_processor(open_image(it["image"]),
+                                               return_tensors="pt")["pixel_values"][0]
+                for option in it["options"]:
+                    # Same chat layout as training; the answer is the option text.
+                    ids, labels = encode_conversation(
+                        tokenizer, [{"from": "human", "value": f"{it['question']}\n{ANSWER_PROMPT}"},
+                                    {"from": "gpt", "value": option}],
+                        cfg.n_image_tokens, cfg.max_text_tokens)
+                    assert [t for t in labels if t != -100][-1] == im_end, option
+                    seqs.append(dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels),
+                                     pixel_values=pixel_values))
+                    owners.append(k)
+            batch = {k: v.to(device) for k, v in collate(seqs).items()}
+            with autocast(device):
+                nll_image, n_tok, _ = model.sequence_nll(**batch)
+                batch["pixel_values"] = torch.zeros_like(batch["pixel_values"])
+                nll_blank, _, _ = model.sequence_nll(**batch)
+            for k, it in enumerate(chunk):
+                rows = [i for i, o in enumerate(owners) if o == k]
+                results.append(dict(
+                    id=it["id"], answer=it["answer"], group=it["group"],
+                    question=it["question"], options=it["options"],
+                    n_tokens=[int(n_tok[i]) for i in rows],
+                    nll_image=[float(nll_image[i]) for i in rows],
+                    nll_blank=[float(nll_blank[i]) for i in rows]))
+            print(f"{bench}: {min(start + args.batch_size, len(items))}/{len(items)}", flush=True)
+
+        summary = options_summary(results, args.bootstrap_samples, args.seed)
+        path = os.path.join(args.out_dir, f"options_{bench}.json")
+        with open(path, "w") as f:
+            json.dump(dict(benchmark=bench, prompt=ANSWER_PROMPT, summary=summary,
+                           items=results), f, indent=2)
+        print(f"\n{bench}\n{format_options(summary)}\nsaved {path}\n")
+
+
 def add_metrics(result: dict, args):
     metrics = caption_metrics(result["captions"], args.bootstrap_samples, args.seed)
     result["metrics"] = metrics
@@ -223,7 +281,7 @@ def main():
     parent, y = yaml_from_argv()
     e = y["eval"]
     ap = argparse.ArgumentParser(parents=[parent])
-    ap.add_argument("command", choices=["grounding", "caption", "rescore", "reference"])
+    ap.add_argument("command", choices=["grounding", "caption", "rescore", "reference", "options"])
     ap.add_argument("--data_dir", default=y["paths"]["data_dir"])
     ap.add_argument("--subset", default=y["data"]["subset"])
     ap.add_argument("--out_dir", required=True, help="training run directory")
@@ -236,12 +294,16 @@ def main():
                     help="token limit for the detailed-description prompt")
     ap.add_argument("--short_only", action="store_true")
     ap.add_argument("--cider", action=argparse.BooleanOptionalAction, default=e["cider"])
+    ap.add_argument("--benchmarks", nargs="+", default=list(BENCHMARKS), choices=list(BENCHMARKS),
+                    help="options: which multiple-choice benchmarks")
+    ap.add_argument("--max_items", type=int, default=0, help="options: first N items only")
     ap.add_argument("--bootstrap_samples", type=int, default=e["bootstrap_samples"])
     ap.add_argument("--seed", type=int, default=e["seed"])
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    commands = dict(grounding=grounding, caption=caption, rescore=rescore, reference=reference)
+    commands = dict(grounding=grounding, caption=caption, rescore=rescore, reference=reference,
+                    options=options)
     commands[args.command](args, device)
 
 

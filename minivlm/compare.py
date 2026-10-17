@@ -5,6 +5,7 @@
 Uses whichever results every run has:
     captions.json             CIDEr of generated captions (eval caption)
     reference_likelihood.json loss of the reference captions (eval reference)
+    options_<benchmark>.json  multiple-choice accuracy (eval options)
 Scores are paired image by image, so the intervals on the differences account
 for some images being harder than others for every model.
 """
@@ -14,7 +15,9 @@ import json
 import os
 
 from .config import yaml_from_argv
-from .metrics import format_ci, paired_comparison, paired_likelihood_comparison
+from .benchmarks import BENCHMARKS
+from .metrics import (format_ci, paired_comparison, paired_likelihood_comparison,
+                      paired_options_comparison)
 
 
 def _load(runs: dict, filename: str):
@@ -77,6 +80,18 @@ def main():
             _print_block(m["description"], m)
         print("\nloss: lower is better, so a negative difference means the first run is better;"
               "\ngap: higher is better (the correct image helps more)")
+
+    for bench in BENCHMARKS:
+        data = _load(runs, f"options_{bench}.json")
+        if data:
+            result = paired_options_comparison({n: d["items"] for n, d in data.items()},
+                                               args.bootstrap_samples, args.seed)
+            out[f"options_{bench}"] = result
+            chance = next(iter(data.values()))["summary"]["chance"]
+            print(f"\n=== {bench}: option likelihood, higher is better ===\n"
+                  f"{result['n_items']} items; chance {chance:.3f} per question")
+            for m in result["metrics"].values():
+                _print_block(m["description"], m)
 
     print("\n(mean [95% bootstrap interval]; a difference is clear when its interval excludes 0)")
     if args.out:

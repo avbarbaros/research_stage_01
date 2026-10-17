@@ -192,3 +192,10 @@ def test_sequence_nll_matches_forward_loss():
         only_last = {k: v[row:row + 1].clone() for k, v in batch.items()}
         only_last["labels"][0, :end] = IGNORE
         assert torch.allclose(last[row], model(**only_last).loss, atol=1e-5)
+
+
+def test_parse_mmvp_options():
+    from minivlm.benchmarks import parse_mmvp_options
+    assert parse_mmvp_options("(a) Open (b) Closed") == ["Open", "Closed"]
+    assert parse_mmvp_options("(a) Yes (b) No ") == ["Yes", "No"]
+    assert parse_mmvp_options("(a) The front (b) The side of it") == ["The front", "The side of it"]

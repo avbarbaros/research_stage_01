@@ -3,6 +3,7 @@ transformers>=4.45
 huggingface_hub
 pillow
 pyyaml
+pyarrow
 requests
 tqdm
 matplotlib

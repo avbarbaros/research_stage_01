@@ -134,3 +134,43 @@ def test_end_token_split():
     cmp = paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=200)
     assert cmp["metrics"]["end_correct"]["pairs"]["a - b"]["mean"] == pytest.approx(1.0)
     assert cmp["metrics"]["content_correct"]["pairs"]["a - b"]["mean"] == pytest.approx(0.0)
+
+
+def _mc_item(id_, answer, nll_image, nll_blank, n_tokens, group=None):
+    return dict(id=id_, answer=answer, group=group, nll_image=nll_image,
+                nll_blank=nll_blank, n_tokens=n_tokens)
+
+
+def test_option_correct_sum_vs_mean():
+    from minivlm.metrics import option_correct
+    # option 0: 2 tokens, total 4 (2/token); option 1: 6 tokens, total 6 (1/token)
+    it = _mc_item("q", 1, [4.0, 6.0], [1.0, 9.0], [2, 6])
+    assert option_correct(it, "image", "sum") == 0   # picks option 0
+    assert option_correct(it, "image", "mean") == 1  # picks option 1
+    assert option_correct(it, "blank", "mean") == 0
+
+
+def test_mmvp_pair_accuracy_and_comparison():
+    from minivlm.metrics import options_summary, paired_options_comparison
+    good = [_mc_item("1", 0, [1.0, 2.0], [1.0, 2.0], [1, 1], group=0),
+            _mc_item("2", 1, [2.0, 1.0], [1.0, 2.0], [1, 1], group=0),
+            _mc_item("3", 0, [1.0, 2.0], [1.0, 2.0], [1, 1], group=1),
+            _mc_item("4", 1, [1.0, 2.0], [1.0, 2.0], [1, 1], group=1)]
+    s = options_summary(good, n_bootstrap=200)
+    assert s["acc_sum"]["mean"] == 0.75
+    assert s["pair_acc_sum"]["mean"] == 0.5 and s["pair_acc_sum"]["n"] == 2
+    assert s["acc_sum_blank"]["mean"] == 0.5  # same prediction for both questions of a pair
+    assert s["chance"] == 0.5
+
+    blind = [dict(it, nll_image=[1.0, 2.0]) for it in good]
+    cmp = paired_options_comparison({"good": good, "blind": blind}, n_bootstrap=200)
+    assert cmp["n_items"] == 4
+    assert cmp["metrics"]["acc_sum"]["pairs"]["good - blind"]["mean"] == 0.25
+    assert cmp["metrics"]["pair_acc_sum"]["pairs"]["good - blind"]["mean"] == 0.5
+
+
+def test_no_pair_accuracy_without_groups():
+    from minivlm.metrics import options_summary
+    s = options_summary([_mc_item("a", 0, [1.0, 2.0, 3.0, 4.0], [1.0] * 4, [1] * 4)],
+                        n_bootstrap=50)
+    assert "pair_acc_sum" not in s and s["chance"] == 0.25
