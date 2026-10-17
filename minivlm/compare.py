@@ -73,10 +73,10 @@ def main():
         out["reference_likelihood"] = result
         print(f"\n=== Reference captions: loss per token ===\n"
               f"{result['n_images']} images, {result['n_tokens']} reference tokens")
-        _print_block("correct image (lower is better; negative difference = first run better)",
-                     result["metrics"]["correct"])
-        _print_block("grounding gap, shuffled - correct (higher is better)",
-                     result["metrics"]["gap"])
+        for m in result["metrics"].values():
+            _print_block(m["description"], m)
+        print("\nloss: lower is better, so a negative difference means the first run is better;"
+              "\ngap: higher is better (the correct image helps more)")
 
     print("\n(mean [95% bootstrap interval]; a difference is clear when its interval excludes 0)")
     if args.out:

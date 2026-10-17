@@ -177,16 +177,21 @@ class MiniVLM(nn.Module):
 
     @torch.no_grad()
     def sequence_nll(self, input_ids, attention_mask, pixel_values, labels):
-        """Per-sample summed negative log-likelihood of the supervised tokens.
+        """Per-sample negative log-likelihood of the supervised tokens.
 
-        Returns (nll [B], n_tokens [B]); nll / n_tokens is that sample's loss.
+        Returns (nll [B], n_tokens [B], last_nll [B]): the summed loss, the
+        number of supervised tokens, and the loss of the last supervised token
+        alone (the closing <|im_end|> of a single answer). nll / n_tokens is
+        that sample's mean loss.
         """
         inputs_embeds = self.embed(input_ids, pixel_values)
         logits, targets, keep = self._supervised_logits(inputs_embeds, attention_mask, labels)
         nll = F.cross_entropy(logits.float(), targets[keep], reduction="none")
         rows = keep.nonzero()[:, 0]  # same row-major order as the boolean indexing above
         sums = torch.zeros(len(labels), device=nll.device).index_add_(0, rows, nll)
-        return sums, keep.sum(dim=1)
+        counts = keep.sum(dim=1)
+        last = nll[(counts.cumsum(0) - 1).clamp(min=0)]
+        return sums, counts, torch.where(counts > 0, last, torch.zeros_like(last))
 
     @torch.no_grad()
     def generate(self, input_ids, attention_mask, pixel_values, **gen_kwargs):

@@ -100,6 +100,7 @@ def test_likelihood_summary_and_paired_comparison():
     assert s["correct"]["mean"] == pytest.approx(40 / 30)
     assert s["gap"]["mean"] == pytest.approx(15 / 30)
     assert s["n_tokens"] == 30
+    assert "end_correct" not in s  # older files have no end-token split
 
     cmp = paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=200)
     diff = cmp["metrics"]["correct"]["pairs"]["a - b"]
@@ -109,3 +110,27 @@ def test_likelihood_summary_and_paired_comparison():
     b["x"]["tokens"] = 11
     with pytest.raises(ValueError):
         paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=10)
+
+
+def test_end_token_split():
+    from minivlm.metrics import likelihood_summary, paired_likelihood_comparison
+    # 2 captions per image; the end tokens cost 6 nats each with the correct image
+    a = {"x": dict(tokens=10, nll_correct=20.0, nll_shuffled=30.0, end_tokens=2,
+                   nll_end_correct=12.0, nll_end_shuffled=13.0),
+         "y": dict(tokens=12, nll_correct=22.0, nll_shuffled=34.0, end_tokens=2,
+                   nll_end_correct=12.0, nll_end_shuffled=14.0)}
+    s = likelihood_summary(a, n_bootstrap=200)
+    assert s["end_correct"]["mean"] == pytest.approx(24 / 4)          # nats per caption
+    assert s["content_correct"]["mean"] == pytest.approx(18 / 18)     # (42 - 24) / (22 - 4)
+    assert s["end_gap"]["mean"] == pytest.approx(3 / 4)
+    assert s["content_gap"]["mean"] == pytest.approx((64 - 27 - 18) / 18)
+    assert s["end_share"]["mean"] == pytest.approx(24 / 22)
+    # content + end contributions add up to the total loss per token
+    assert s["end_share"]["mean"] + s["content_correct"]["mean"] * 18 / 22 == pytest.approx(
+        s["correct"]["mean"])
+
+    b = {n: dict(r, nll_correct=r["nll_correct"] - 2.0, nll_end_correct=r["nll_end_correct"] - 2.0)
+         for n, r in a.items()}
+    cmp = paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=200)
+    assert cmp["metrics"]["end_correct"]["pairs"]["a - b"]["mean"] == pytest.approx(1.0)
+    assert cmp["metrics"]["content_correct"]["pairs"]["a - b"]["mean"] == pytest.approx(0.0)

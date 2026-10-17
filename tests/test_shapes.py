@@ -179,10 +179,16 @@ def test_build_prompt_ends_at_assistant(tokenizer):
 def test_sequence_nll_matches_forward_loss():
     model, batch = tiny_vlm(), tiny_batch()
     batch["labels"][0, 10:] = IGNORE  # uneven number of supervised tokens per row
-    nll, n_tok = model.sequence_nll(**batch)
+    nll, n_tok, last = model.sequence_nll(**batch)
     assert n_tok.tolist() == [2, 4, 4]  # labels[:, 1:] keeps positions 8.. minus the ignored ones
     loss = model(**batch).loss
     assert torch.allclose(nll.sum() / n_tok.sum(), loss, atol=1e-5)
 
     one = {k: v[1:2] for k, v in batch.items()}
     assert torch.allclose(nll[1] / n_tok[1], model(**one).loss, atol=1e-5)
+
+    # last supervised token of each row: row 0 ends at label position 9, the others at 11
+    for row, end in [(0, 9), (1, 11), (2, 11)]:
+        only_last = {k: v[row:row + 1].clone() for k, v in batch.items()}
+        only_last["labels"][0, :end] = IGNORE
+        assert torch.allclose(last[row], model(**only_last).loss, atol=1e-5)

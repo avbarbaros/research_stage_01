@@ -143,61 +143,85 @@ def paired_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dic
     return result
 
 
+# Reference-caption likelihood. Each measure is a token-weighted (or caption-
+# weighted) ratio sum(num) / sum(den) over images, computed from per-image sums
+# written by `eval reference`. "end" is the closing <|im_end|> of each caption:
+# its loss shows how ready the model is to stop after one short sentence.
+# The end-token measures need files written after the split was added.
+LIKELIHOOD_MEASURES = {
+    "correct": ("loss per token, correct image",
+                lambda r: (r["nll_correct"], r["tokens"])),
+    "gap": ("grounding gap per token, shuffled - correct",
+            lambda r: (r["nll_shuffled"] - r["nll_correct"], r["tokens"])),
+    "content_correct": ("content tokens only: loss per token, correct image",
+                        lambda r: (r["nll_correct"] - r["nll_end_correct"],
+                                   r["tokens"] - r["end_tokens"])),
+    "content_gap": ("content tokens only: grounding gap per token",
+                    lambda r: ((r["nll_shuffled"] - r["nll_end_shuffled"])
+                               - (r["nll_correct"] - r["nll_end_correct"]),
+                               r["tokens"] - r["end_tokens"])),
+    "end_correct": ("<|im_end|> only: loss per caption, correct image",
+                    lambda r: (r["nll_end_correct"], r["end_tokens"])),
+    "end_gap": ("<|im_end|> only: grounding gap per caption",
+                lambda r: (r["nll_end_shuffled"] - r["nll_end_correct"], r["end_tokens"])),
+    "end_share": ("<|im_end|> contribution to the loss per token, correct image",
+                  lambda r: (r["nll_end_correct"], r["tokens"])),
+}
+
+
+def _available(per_image_dicts) -> list:
+    rows = [r for p in per_image_dicts for r in p.values()]
+    has_end = all("nll_end_correct" in r for r in rows)
+    return [m for m in LIKELIHOOD_MEASURES if has_end or not m.startswith(("content", "end"))]
+
+
 def likelihood_summary(per_image: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
-    """Token-weighted loss of reference captions, from {image: {tokens, nll_correct, nll_shuffled}}."""
+    """All available measures for one run, from {image: per-image sums}."""
     rows = list(per_image.values())
-    tokens = [r["tokens"] for r in rows]
-
-    def ci(nums):
-        return bootstrap_ratio(nums, tokens, n_bootstrap, seed)
-
-    return dict(
-        correct=ci(r["nll_correct"] for r in rows),
-        shuffled=ci(r["nll_shuffled"] for r in rows),
-        gap=ci(r["nll_shuffled"] - r["nll_correct"] for r in rows),
-        n_images=len(rows),
-        n_tokens=int(sum(tokens)),
-    )
+    summary = {}
+    for m in _available([per_image]):
+        num, den = zip(*(LIKELIHOOD_MEASURES[m][1](r) for r in rows))
+        summary[m] = bootstrap_ratio(num, den, n_bootstrap, seed)
+    summary["n_images"] = len(rows)
+    summary["n_tokens"] = int(sum(r["tokens"] for r in rows))
+    return summary
 
 
 def paired_likelihood_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
     """Compare reference-caption likelihood of runs, image by image.
 
     runs: {run name: per_image dict from reference_likelihood.json}. Differences
-    are "first - second": negative "correct" means the first run gives the
-    references a lower loss; positive "gap" means it is more grounded.
+    are "first - second": a negative loss difference means the first run gives
+    the references a lower loss; a positive gap difference means it is more
+    grounded.
     """
     common = sorted(set.intersection(*(set(p) for p in runs.values())))
     if any(len({runs[r][n]["tokens"] for r in runs}) > 1 for n in common):
         raise ValueError("runs tokenised the references differently; are the LLMs the same?")
-    tokens = [next(iter(runs.values()))[n]["tokens"] for n in common]
 
-    def values(name, measure):
-        p = runs[name]
-        if measure == "correct":
-            return [p[n]["nll_correct"] for n in common]
-        return [p[n]["nll_shuffled"] - p[n]["nll_correct"] for n in common]
-
-    result = dict(n_images=len(common), n_tokens=int(sum(tokens)), metrics={})
-    for measure in ["correct", "gap"]:
-        result["metrics"][measure] = dict(
-            per_run={name: bootstrap_ratio(values(name, measure), tokens, n_bootstrap, seed)
-                     for name in runs},
-            pairs={f"{a} - {b}": bootstrap_ratio(
-                       [x - y for x, y in zip(values(a, measure), values(b, measure))],
-                       tokens, n_bootstrap, seed)
+    result = dict(n_images=len(common),
+                  n_tokens=int(sum(next(iter(runs.values()))[n]["tokens"] for n in common)),
+                  metrics={})
+    for m in _available(runs.values()):
+        fn = LIKELIHOOD_MEASURES[m][1]
+        num = {name: [fn(runs[name][n])[0] for n in common] for name in runs}
+        den = [fn(next(iter(runs.values()))[n])[1] for n in common]
+        result["metrics"][m] = dict(
+            description=LIKELIHOOD_MEASURES[m][0],
+            per_run={name: bootstrap_ratio(num[name], den, n_bootstrap, seed) for name in runs},
+            pairs={f"{a} - {b}": bootstrap_ratio([x - y for x, y in zip(num[a], num[b])],
+                                                 den, n_bootstrap, seed)
                    for a, b in combinations(runs, 2)},
         )
     return result
 
 
 def format_likelihood(m: dict) -> str:
-    return "\n".join([
-        f"loss per token, correct image  {format_ci(m['correct'])}",
-        f"loss per token, shuffled image {format_ci(m['shuffled'])}",
-        f"gap (shuffled - correct)       {format_ci(m['gap'])}",
-        f"({m['n_images']} images, {m['n_tokens']} reference tokens; 95% bootstrap over images)",
-    ])
+    lines = [f"{LIKELIHOOD_MEASURES[k][0]:62s} {format_ci(m[k])}"
+             for k in LIKELIHOOD_MEASURES if k in m]
+    lines.append(f"({m['n_images']} images, {m['n_tokens']} reference tokens; "
+                 "95% bootstrap over images)")
+    return "\n".join(lines)
 
 
 def format_ci(ci: dict | None) -> str:

@@ -12,7 +12,8 @@ caption:   captions for COCO val2017 images, optionally scored with CIDEr
            (whole caption, first sentence, finished captions; see metrics.py).
 rescore:   recompute the metrics of an existing captions.json, no GPU needed.
 reference: loss of the COCO reference captions of the same images, given the
-           short-caption prompt, with the correct and with another image.
+           short-caption prompt, with the correct and with another image;
+           also split into the caption's words and its closing <|im_end|>.
            Separates "the image features lack the information" from "the
            model does not write it": no generation is involved.
 """
@@ -156,7 +157,9 @@ def reference(args, device):
         image = Image.open(os.path.join(image_dir, name)).convert("RGB")
         return image_processor(image, return_tensors="pt")["pixel_values"][0]
 
-    per_image = {n: dict(tokens=0, nll_correct=0.0, nll_shuffled=0.0) for n in names}
+    im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    per_image = {n: dict(tokens=0, nll_correct=0.0, nll_shuffled=0.0, end_tokens=0,
+                         nll_end_correct=0.0, nll_end_shuffled=0.0) for n in names}
     for start in range(0, len(names), args.batch_size):
         chunk = names[start: start + args.batch_size]
         pix = {n: pixels(n) for n in set(chunk) | {partner[n] for n in chunk}}
@@ -168,19 +171,26 @@ def reference(args, device):
                     tokenizer, [{"from": "human", "value": SHORT_PROMPT},
                                 {"from": "gpt", "value": ref}],
                     cfg.n_image_tokens, cfg.max_text_tokens)
+                # The last supervised token must be the closing <|im_end|>.
+                assert [t for t in labels if t != -100][-1] == im_end, ref
                 items.append(dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels),
                                   pixel_values=pix[n]))
                 owners.append(n)
         batch = {k: v.to(device) for k, v in collate(items).items()}
         shuffled = torch.stack([pix[partner[n]] for n in owners]).to(device)
         with autocast(device):
-            nll_c, n_tok = model.sequence_nll(**batch)
+            nll_c, n_tok, end_c = model.sequence_nll(**batch)
             batch["pixel_values"] = shuffled
-            nll_s, _ = model.sequence_nll(**batch)
-        for n, c, s, t in zip(owners, nll_c.tolist(), nll_s.tolist(), n_tok.tolist()):
-            per_image[n]["tokens"] += t
-            per_image[n]["nll_correct"] += c
-            per_image[n]["nll_shuffled"] += s
+            nll_s, _, end_s = model.sequence_nll(**batch)
+        for n, c, s, t, ec, es in zip(owners, nll_c.tolist(), nll_s.tolist(), n_tok.tolist(),
+                                      end_c.tolist(), end_s.tolist()):
+            r = per_image[n]
+            r["tokens"] += t
+            r["nll_correct"] += c
+            r["nll_shuffled"] += s
+            r["end_tokens"] += 1
+            r["nll_end_correct"] += ec
+            r["nll_end_shuffled"] += es
         print(f"reference: {min(start + args.batch_size, len(names))}/{len(names)} images",
               flush=True)
 
