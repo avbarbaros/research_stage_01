@@ -174,3 +174,13 @@ def test_no_pair_accuracy_without_groups():
     s = options_summary([_mc_item("a", 0, [1.0, 2.0, 3.0, 4.0], [1.0] * 4, [1] * 4)],
                         n_bootstrap=50)
     assert "pair_acc_sum" not in s and s["chance"] == 0.25
+
+
+def test_blank_gap_only_when_present():
+    from minivlm.metrics import likelihood_summary
+    rows = {"0": dict(tokens=10, nll_correct=10.0, nll_shuffled=14.0, nll_blank=13.0)}
+    s = likelihood_summary(rows, n_bootstrap=20)
+    assert s["blank_gap"]["mean"] == pytest.approx(0.3) and s["gap"]["mean"] == pytest.approx(0.4)
+    assert "end_correct" not in s
+    del rows["0"]["nll_blank"]
+    assert "blank_gap" not in likelihood_summary(rows, n_bootstrap=20)

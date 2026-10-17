@@ -3,6 +3,7 @@
     python -m minivlm.compare <run dir> <run dir> ... [--names clip siglip dinov2]
 
 Uses whichever results every run has:
+    grounding.json            loss on held-out descriptions (eval grounding)
     captions.json             CIDEr of generated captions (eval caption)
     reference_likelihood.json loss of the reference captions (eval reference)
     options_<benchmark>.json  multiple-choice accuracy (eval options)
@@ -57,6 +58,20 @@ def main():
         ap.error("--names needs one distinct label per run")
     runs = dict(zip(names, args.runs))
     out = dict(runs=runs)
+
+    grounding = _load(runs, "grounding.json")
+    if grounding and not all("per_sample" in d for d in grounding.values()):
+        print("\nskipping grounding.json: written before per-sample losses were saved; "
+              "re-run `eval grounding`")
+    elif grounding:
+        result = paired_likelihood_comparison({n: d["per_sample"] for n, d in grounding.items()},
+                                              args.bootstrap_samples, args.seed)
+        out["grounding"] = result
+        print(f"=== Held-out detailed descriptions: loss per token ===\n"
+              f"{result['n_images']} samples, {result['n_tokens']} tokens")
+        for m in result["metrics"].values():
+            _print_block(m["description"], m)
+        print()
 
     captions = _load(runs, "captions.json")
     if captions:

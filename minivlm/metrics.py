@@ -147,12 +147,15 @@ def paired_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dic
 # weighted) ratio sum(num) / sum(den) over images, computed from per-image sums
 # written by `eval reference`. "end" is the closing <|im_end|> of each caption:
 # its loss shows how ready the model is to stop after one short sentence.
-# The end-token measures need files written after the split was added.
+# A measure is skipped when the files lack its fields (older files have no
+# end-token split; only the grounding eval has a blank-image condition).
 LIKELIHOOD_MEASURES = {
     "correct": ("loss per token, correct image",
                 lambda r: (r["nll_correct"], r["tokens"])),
     "gap": ("grounding gap per token, shuffled - correct",
             lambda r: (r["nll_shuffled"] - r["nll_correct"], r["tokens"])),
+    "blank_gap": ("grounding gap per token, blank - correct",
+                  lambda r: (r["nll_blank"] - r["nll_correct"], r["tokens"])),
     "content_correct": ("content tokens only: loss per token, correct image",
                         lambda r: (r["nll_correct"] - r["nll_end_correct"],
                                    r["tokens"] - r["end_tokens"])),
@@ -171,8 +174,16 @@ LIKELIHOOD_MEASURES = {
 
 def _available(per_image_dicts) -> list:
     rows = [r for p in per_image_dicts for r in p.values()]
-    has_end = all("nll_end_correct" in r for r in rows)
-    return [m for m in LIKELIHOOD_MEASURES if has_end or not m.startswith(("content", "end"))]
+
+    def computable(fn):
+        try:
+            for r in rows:
+                fn(r)
+        except KeyError:
+            return False
+        return True
+
+    return [m for m, (_, fn) in LIKELIHOOD_MEASURES.items() if computable(fn)]
 
 
 def likelihood_summary(per_image: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
@@ -197,7 +208,7 @@ def paired_likelihood_comparison(runs: dict, n_bootstrap: int = 5000, seed: int 
     """
     common = sorted(set.intersection(*(set(p) for p in runs.values())))
     if any(len({runs[r][n]["tokens"] for r in runs}) > 1 for n in common):
-        raise ValueError("runs tokenised the references differently; are the LLMs the same?")
+        raise ValueError("runs tokenised the texts differently; are the LLMs the same?")
 
     result = dict(n_images=len(common),
                   n_tokens=int(sum(next(iter(runs.values()))[n]["tokens"] for n in common)),

@@ -74,25 +74,33 @@ def grounding(args, device):
     loader = DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers,
                         collate_fn=Collator(tokenizer.pad_token_id))
 
-    totals = dict(correct=0.0, shuffled=0.0, blank=0.0)
-    n_tokens = 0
+    # Per held-out sample (keyed by its position in holdout.json): summed loss
+    # under each image condition, so runs can be compared sample by sample.
+    per_sample = {}
+    offset = 0
     for batch in loader:
-        batch = {k: v.to(device) for k, v in batch.items()}
+        start, offset = offset, offset + len(batch["input_ids"])
         if len(batch["input_ids"]) < 2:
             continue  # cannot shuffle a batch of one
+        batch = {k: v.to(device) for k, v in batch.items()}
         pixels = batch.pop("pixel_values")
-        n = (batch["labels"][:, 1:] != -100).sum().item()
         variants = dict(correct=pixels, shuffled=pixels.roll(1, dims=0),
                         blank=torch.zeros_like(pixels))
+        sums = {}
         for name, pv in variants.items():
             with autocast(device):
-                totals[name] += model(pixel_values=pv, **batch).loss.item() * n
-        n_tokens += n
+                sums[name], n_tok, _ = model.sequence_nll(pixel_values=pv, **batch)
+        for j in range(len(n_tok)):
+            per_sample[str(start + j)] = dict(
+                tokens=int(n_tok[j]), **{f"nll_{name}": float(s[j]) for name, s in sums.items()})
 
-    result = {name: total / n_tokens for name, total in totals.items()}
-    result["n_samples"] = len(samples)
+    n_tokens = sum(r["tokens"] for r in per_sample.values())
+    result = {name: sum(r[f"nll_{name}"] for r in per_sample.values()) / n_tokens
+              for name in ["correct", "shuffled", "blank"]}
+    result["n_samples"] = len(per_sample)
     result["n_tokens"] = n_tokens
     print(json.dumps(result, indent=2))
+    result["per_sample"] = per_sample
     with open(os.path.join(args.out_dir, "grounding.json"), "w") as f:
         json.dump(result, f, indent=2)
 

@@ -87,6 +87,7 @@ python scripts/10_show_results.py    # results + <run>/captions_grid.png
 python scripts/11_eval_reference_likelihood.py  # loss of the COCO reference captions, correct vs other image
 python scripts/12_compare_runs.py RUN_A RUN_B ...  # paired comparison of runs, e.g. encoders (E1.2)
 python scripts/13_eval_options.py    # MMVP + A-OKVQA by option likelihood; re-run 12 afterwards
+python scripts/14_projector_ablation.py  # projector sizes on 10k samples: train, evaluate, compare
 ```
 
 ### Settings
@@ -183,7 +184,9 @@ CIDEr is reported three ways, each with a 95% bootstrap interval over images: on
 - **MMVP**: 150 pairs of images that CLIP embeds almost identically but that differ visibly; both questions of a pair are the same, with opposite answers. Pair accuracy (both right) is the standard metric; chance is 25%, and a model that ignores the image scores 0.
 - **A-OKVQA** validation: 1,145 questions on COCO val2017 images, four options each (chance 25%).
 
-Both are downloaded from the Hugging Face Hub on first use. `12_compare_runs.py` includes them once every run has `options_mmvp.json` / `options_aokvqa.json`.
+Both are downloaded from the Hugging Face Hub on first use. `12_compare_runs.py` includes them once every run has `options_mmvp.json` / `options_aokvqa.json`. It also compares the held-out grounding losses sample by sample, for `grounding.json` files that include per-sample losses (written by `08_eval_grounding.py` from this version on).
+
+`14_projector_ablation.py` answers "what breaks when the projector is too small": it trains the default two-layer MLP, the same MLP with a 64- and a 16-wide hidden layer, and a single linear layer, all on the first 10k samples of the main subset, runs the grounding, reference and multiple-choice evaluations for each, and prints the paired comparison, a one-line summary per size and a combined loss plot (`<runs_dir>/projector_ablation_<encoder>_loss.png`). Re-running it resumes training and skips finished evaluations; `--variants` and `--max_samples` change the sweep.
 
 ### Underlying modules
 
