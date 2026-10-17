@@ -81,3 +81,31 @@ def test_paired_comparison_uses_common_images_only():
     partial = records({k: v for k, v in GOOD.items() if k != "c.jpg"})
     result = paired_comparison({"full": records(GOOD), "partial": partial}, n_bootstrap=100)
     assert result["n_images"] == 2
+
+
+def test_bootstrap_ratio_is_token_weighted():
+    from minivlm.metrics import bootstrap_ratio
+    ci = bootstrap_ratio([10.0, 1.0], [10, 1], n_samples=500)
+    assert ci["mean"] == 1.0 and ci["lo"] == ci["hi"] == 1.0
+    ci = bootstrap_ratio([20.0, 1.0], [10, 1], n_samples=500)
+    assert ci["mean"] == pytest.approx(21 / 11)
+
+
+def test_likelihood_summary_and_paired_comparison():
+    from minivlm.metrics import likelihood_summary, paired_likelihood_comparison
+    a = {"x": dict(tokens=10, nll_correct=10.0, nll_shuffled=15.0),
+         "y": dict(tokens=20, nll_correct=30.0, nll_shuffled=40.0)}
+    b = {n: dict(r, nll_correct=r["nll_correct"] + r["tokens"] * 0.5) for n, r in a.items()}
+    s = likelihood_summary(a, n_bootstrap=200)
+    assert s["correct"]["mean"] == pytest.approx(40 / 30)
+    assert s["gap"]["mean"] == pytest.approx(15 / 30)
+    assert s["n_tokens"] == 30
+
+    cmp = paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=200)
+    diff = cmp["metrics"]["correct"]["pairs"]["a - b"]
+    assert diff["mean"] == pytest.approx(-0.5) and diff["lo"] == pytest.approx(-0.5)
+    assert cmp["metrics"]["gap"]["pairs"]["a - b"]["mean"] == pytest.approx(0.5)
+
+    b["x"]["tokens"] = 11
+    with pytest.raises(ValueError):
+        paired_likelihood_comparison({"a": a, "b": b}, n_bootstrap=10)

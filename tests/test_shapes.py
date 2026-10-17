@@ -174,3 +174,15 @@ def test_truncation_respects_budget(tokenizer):
 def test_build_prompt_ends_at_assistant(tokenizer):
     ids = build_prompt(tokenizer, "Describe the image.", 6)
     assert tokenizer.decode(ids).endswith("<|im_start|>assistant\n")
+
+
+def test_sequence_nll_matches_forward_loss():
+    model, batch = tiny_vlm(), tiny_batch()
+    batch["labels"][0, 10:] = IGNORE  # uneven number of supervised tokens per row
+    nll, n_tok = model.sequence_nll(**batch)
+    assert n_tok.tolist() == [2, 4, 4]  # labels[:, 1:] keeps positions 8.. minus the ignored ones
+    loss = model(**batch).loss
+    assert torch.allclose(nll.sum() / n_tok.sum(), loss, atol=1e-5)
+
+    one = {k: v[1:2] for k, v in batch.items()}
+    assert torch.allclose(nll[1] / n_tok[1], model(**one).loss, atol=1e-5)

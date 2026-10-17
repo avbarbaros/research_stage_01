@@ -3,6 +3,7 @@
     python -m minivlm.eval grounding --data_dir /content/data --out_dir <run dir>
     python -m minivlm.eval caption   --data_dir /content/data --out_dir <run dir> --n 50 --cider
     python -m minivlm.eval rescore   --out_dir <run dir>
+    python -m minivlm.eval reference --data_dir /content/data --out_dir <run dir>
 
 grounding: loss on held-out descriptions with the correct image, another
            sample's image, and a blank image. A grounded model has a clearly
@@ -10,6 +11,10 @@ grounding: loss on held-out descriptions with the correct image, another
 caption:   captions for COCO val2017 images, optionally scored with CIDEr
            (whole caption, first sentence, finished captions; see metrics.py).
 rescore:   recompute the metrics of an existing captions.json, no GPU needed.
+reference: loss of the COCO reference captions of the same images, given the
+           short-caption prompt, with the correct and with another image.
+           Separates "the image features lack the information" from "the
+           model does not write it": no generation is involved.
 """
 
 import argparse
@@ -26,8 +31,8 @@ from transformers import AutoImageProcessor, AutoTokenizer
 
 from .config import Config, yaml_from_argv
 from .data import (Collator, LlavaDataset, build_prompt, download_coco_images,
-                   load_coco_val_captions, subset_paths)
-from .metrics import caption_metrics, format_metrics
+                   encode_conversation, load_coco_val_captions, subset_paths)
+from .metrics import caption_metrics, format_likelihood, format_metrics, likelihood_summary
 from .model import MiniVLM
 
 SHORT_PROMPT = "Describe the image in one short sentence."
@@ -83,16 +88,21 @@ def grounding(args, device):
         json.dump(result, f, indent=2)
 
 
-@torch.no_grad()
-def caption(args, device):
-    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
+def select_val_images(args):
+    """The same seeded selection of COCO val2017 images for every run and command."""
     refs = load_coco_val_captions(args.data_dir)
     names = sorted(refs)
     random.Random(args.seed).shuffle(names)
     names = names[: args.n]
     image_dir = os.path.join(args.data_dir, "val2017")
     failed = set(download_coco_images(names, image_dir, split="val2017"))
-    names = [n for n in names if n not in failed]
+    return refs, [n for n in names if n not in failed], image_dir
+
+
+@torch.no_grad()
+def caption(args, device):
+    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
+    refs, names, image_dir = select_val_images(args)
 
     prompts = {"short": (SHORT_PROMPT, args.short_max_new_tokens),
                "detail": (DETAIL_PROMPT, args.max_new_tokens)}
@@ -134,6 +144,54 @@ def caption(args, device):
         print(f"\n{r['image']}\n  short : {r['short']}\n  ref   : {r['references'][0]}")
 
 
+@torch.no_grad()
+def reference(args, device):
+    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
+    refs, names, image_dir = select_val_images(args)
+    # The "shuffled" image of each image is the next one in the list.
+    partner = {n: names[(i + 1) % len(names)] for i, n in enumerate(names)}
+    collate = Collator(tokenizer.pad_token_id)
+
+    def pixels(name):
+        image = Image.open(os.path.join(image_dir, name)).convert("RGB")
+        return image_processor(image, return_tensors="pt")["pixel_values"][0]
+
+    per_image = {n: dict(tokens=0, nll_correct=0.0, nll_shuffled=0.0) for n in names}
+    for start in range(0, len(names), args.batch_size):
+        chunk = names[start: start + args.batch_size]
+        pix = {n: pixels(n) for n in set(chunk) | {partner[n] for n in chunk}}
+        items, owners = [], []
+        for n in chunk:
+            for ref in refs[n]:
+                # Same chat layout and label masking as training, one turn.
+                ids, labels = encode_conversation(
+                    tokenizer, [{"from": "human", "value": SHORT_PROMPT},
+                                {"from": "gpt", "value": ref}],
+                    cfg.n_image_tokens, cfg.max_text_tokens)
+                items.append(dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels),
+                                  pixel_values=pix[n]))
+                owners.append(n)
+        batch = {k: v.to(device) for k, v in collate(items).items()}
+        shuffled = torch.stack([pix[partner[n]] for n in owners]).to(device)
+        with autocast(device):
+            nll_c, n_tok = model.sequence_nll(**batch)
+            batch["pixel_values"] = shuffled
+            nll_s, _ = model.sequence_nll(**batch)
+        for n, c, s, t in zip(owners, nll_c.tolist(), nll_s.tolist(), n_tok.tolist()):
+            per_image[n]["tokens"] += t
+            per_image[n]["nll_correct"] += c
+            per_image[n]["nll_shuffled"] += s
+        print(f"reference: {min(start + args.batch_size, len(names))}/{len(names)} images",
+              flush=True)
+
+    summary = likelihood_summary(per_image, args.bootstrap_samples, args.seed)
+    result = dict(prompt=SHORT_PROMPT, n_references=sum(len(refs[n]) for n in names),
+                  summary=summary, per_image=per_image)
+    with open(os.path.join(args.out_dir, "reference_likelihood.json"), "w") as f:
+        json.dump(result, f, indent=2)
+    print(format_likelihood(summary))
+
+
 def add_metrics(result: dict, args):
     metrics = caption_metrics(result["captions"], args.bootstrap_samples, args.seed)
     result["metrics"] = metrics
@@ -155,13 +213,14 @@ def main():
     parent, y = yaml_from_argv()
     e = y["eval"]
     ap = argparse.ArgumentParser(parents=[parent])
-    ap.add_argument("command", choices=["grounding", "caption", "rescore"])
+    ap.add_argument("command", choices=["grounding", "caption", "rescore", "reference"])
     ap.add_argument("--data_dir", default=y["paths"]["data_dir"])
     ap.add_argument("--subset", default=y["data"]["subset"])
     ap.add_argument("--out_dir", required=True, help="training run directory")
     ap.add_argument("--batch_size", type=int, default=e["batch_size"])
     ap.add_argument("--num_workers", type=int, default=e["num_workers"])
-    ap.add_argument("--n", type=int, default=e["caption_n"], help="caption: number of val images")
+    ap.add_argument("--n", type=int, default=e["caption_n"],
+                    help="caption, reference: number of val images")
     ap.add_argument("--short_max_new_tokens", type=int, default=e["short_max_new_tokens"])
     ap.add_argument("--max_new_tokens", type=int, default=e["max_new_tokens"],
                     help="token limit for the detailed-description prompt")
@@ -172,7 +231,8 @@ def main():
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    {"grounding": grounding, "caption": caption, "rescore": rescore}[args.command](args, device)
+    commands = dict(grounding=grounding, caption=caption, rescore=rescore, reference=reference)
+    commands[args.command](args, device)
 
 
 if __name__ == "__main__":

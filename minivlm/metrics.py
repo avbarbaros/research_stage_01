@@ -62,6 +62,22 @@ def bootstrap(values, n_samples: int = 5000, seed: int = 0, level: float = 0.95)
     return dict(mean=float(v.mean()), lo=float(lo), hi=float(hi), n=len(v))
 
 
+def bootstrap_ratio(nums, dens, n_samples: int = 5000, seed: int = 0,
+                    level: float = 0.95) -> dict:
+    """sum(nums) / sum(dens) with a percentile bootstrap interval, resampling items.
+
+    For token-weighted means such as loss per token: items are images, nums
+    their summed loss, dens their token counts.
+    """
+    num = np.asarray(list(nums), dtype=float)
+    den = np.asarray(list(dens), dtype=float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(num), size=(n_samples, len(num)))
+    ratios = num[idx].sum(axis=1) / den[idx].sum(axis=1)
+    lo, hi = np.quantile(ratios, [(1 - level) / 2, 1 - (1 - level) / 2])
+    return dict(mean=float(num.sum() / den.sum()), lo=float(lo), hi=float(hi), n=len(num))
+
+
 def _mean_words(texts) -> float:
     texts = list(texts)
     return float(np.mean([len(t.split()) for t in texts])) if texts else 0.0
@@ -125,6 +141,63 @@ def paired_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dic
                    for a, b in combinations(scores, 2)},
         )
     return result
+
+
+def likelihood_summary(per_image: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
+    """Token-weighted loss of reference captions, from {image: {tokens, nll_correct, nll_shuffled}}."""
+    rows = list(per_image.values())
+    tokens = [r["tokens"] for r in rows]
+
+    def ci(nums):
+        return bootstrap_ratio(nums, tokens, n_bootstrap, seed)
+
+    return dict(
+        correct=ci(r["nll_correct"] for r in rows),
+        shuffled=ci(r["nll_shuffled"] for r in rows),
+        gap=ci(r["nll_shuffled"] - r["nll_correct"] for r in rows),
+        n_images=len(rows),
+        n_tokens=int(sum(tokens)),
+    )
+
+
+def paired_likelihood_comparison(runs: dict, n_bootstrap: int = 5000, seed: int = 0) -> dict:
+    """Compare reference-caption likelihood of runs, image by image.
+
+    runs: {run name: per_image dict from reference_likelihood.json}. Differences
+    are "first - second": negative "correct" means the first run gives the
+    references a lower loss; positive "gap" means it is more grounded.
+    """
+    common = sorted(set.intersection(*(set(p) for p in runs.values())))
+    if any(len({runs[r][n]["tokens"] for r in runs}) > 1 for n in common):
+        raise ValueError("runs tokenised the references differently; are the LLMs the same?")
+    tokens = [next(iter(runs.values()))[n]["tokens"] for n in common]
+
+    def values(name, measure):
+        p = runs[name]
+        if measure == "correct":
+            return [p[n]["nll_correct"] for n in common]
+        return [p[n]["nll_shuffled"] - p[n]["nll_correct"] for n in common]
+
+    result = dict(n_images=len(common), n_tokens=int(sum(tokens)), metrics={})
+    for measure in ["correct", "gap"]:
+        result["metrics"][measure] = dict(
+            per_run={name: bootstrap_ratio(values(name, measure), tokens, n_bootstrap, seed)
+                     for name in runs},
+            pairs={f"{a} - {b}": bootstrap_ratio(
+                       [x - y for x, y in zip(values(a, measure), values(b, measure))],
+                       tokens, n_bootstrap, seed)
+                   for a, b in combinations(runs, 2)},
+        )
+    return result
+
+
+def format_likelihood(m: dict) -> str:
+    return "\n".join([
+        f"loss per token, correct image  {format_ci(m['correct'])}",
+        f"loss per token, shuffled image {format_ci(m['shuffled'])}",
+        f"gap (shuffled - correct)       {format_ci(m['gap'])}",
+        f"({m['n_images']} images, {m['n_tokens']} reference tokens; 95% bootstrap over images)",
+    ])
 
 
 def format_ci(ci: dict | None) -> str:

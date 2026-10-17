@@ -84,7 +84,8 @@ python scripts/07_plot_loss.py       # -> <run>/loss.png
 python scripts/08_eval_grounding.py  # correct vs shuffled vs blank image
 python scripts/09_eval_captions.py   # 200 COCO val captions + CIDEr
 python scripts/10_show_results.py    # results + <run>/captions_grid.png
-python scripts/11_compare_runs.py RUN_A RUN_B ...  # paired caption comparison, e.g. encoders (E1.2)
+python scripts/11_eval_reference_likelihood.py  # loss of the COCO reference captions, correct vs other image
+python scripts/12_compare_runs.py RUN_A RUN_B ...  # paired comparison of runs, e.g. encoders (E1.2)
 ```
 
 ### Settings
@@ -174,6 +175,8 @@ Used only by `scripts/03_smoke_test.py`; anything not listed here comes from `mo
 
 CIDEr is reported three ways, each with a 95% bootstrap interval over images: on the whole short caption, on its first sentence only, and on captions that finished before the token limit. The model writes LLaVA-style paragraphs where COCO references are one sentence, so the whole-caption score mostly measures length; the first-sentence score is the fairer comparison between runs. All three use a simple tokeniser and IDF from the scored images, so they are for comparisons within this project, not with published numbers. `python -m minivlm.eval rescore --out_dir <run>` recomputes them for an existing `captions.json` without a GPU.
 
+`11_eval_reference_likelihood.py` scores the same images without generating anything: the loss per token of their five COCO reference captions under the short-caption prompt, once with the correct image and once with the next image in the list. If an encoder gives the references a low loss but its generated captions score poorly, its features carry the information and the problem is in decoding; if the references also get a high loss, the features suit short captions less. `12_compare_runs.py` compares both results across runs, pairing scores image by image, and saves `<runs_dir>/comparison.json`.
+
 ### Underlying modules
 
 ```bash
@@ -182,7 +185,8 @@ python -m minivlm.train --out_dir runs/main --resume    # train projector
 python -m minivlm.eval grounding --out_dir runs/main    # correct vs shuffled vs blank image
 python -m minivlm.eval caption   --out_dir runs/main
 python -m minivlm.eval rescore   --out_dir runs/main    # recompute caption metrics, no GPU
-python -m minivlm.compare runs/a runs/b --names a b     # paired caption comparison
+python -m minivlm.eval reference --out_dir runs/main    # reference-caption likelihood
+python -m minivlm.compare runs/a runs/b --names a b     # paired comparison of runs
 pytest tests                                            # CPU, tiny random models
 ```
 

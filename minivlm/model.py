@@ -157,18 +157,36 @@ class MiniVLM(nn.Module):
                 trace["logits"] = tuple(out.logits.shape)
             return out
 
+        logits, targets, keep = self._supervised_logits(inputs_embeds, attention_mask, labels, trace)
+        loss = F.cross_entropy(logits.float(), targets[keep])
+        return SimpleNamespace(loss=loss, logits=logits)
+
+    def _supervised_logits(self, inputs_embeds, attention_mask, labels, trace=None):
+        """Logits at the supervised positions: [S, vocab], plus shifted targets and mask."""
         hidden = self.llm.base_model(
             inputs_embeds=inputs_embeds, attention_mask=attention_mask
         ).last_hidden_state
         targets = labels[:, 1:]  # position t predicts token t+1
         keep = targets != -100
         logits = self.llm.get_output_embeddings()(hidden[:, :-1][keep])
-        loss = F.cross_entropy(logits.float(), targets[keep])
         if trace is not None:
             trace["LLM last hidden state"] = tuple(hidden.shape)
             trace["labels"] = tuple(labels.shape)
             trace["logits (supervised positions only)"] = tuple(logits.shape)
-        return SimpleNamespace(loss=loss, logits=logits)
+        return logits, targets, keep
+
+    @torch.no_grad()
+    def sequence_nll(self, input_ids, attention_mask, pixel_values, labels):
+        """Per-sample summed negative log-likelihood of the supervised tokens.
+
+        Returns (nll [B], n_tokens [B]); nll / n_tokens is that sample's loss.
+        """
+        inputs_embeds = self.embed(input_ids, pixel_values)
+        logits, targets, keep = self._supervised_logits(inputs_embeds, attention_mask, labels)
+        nll = F.cross_entropy(logits.float(), targets[keep], reduction="none")
+        rows = keep.nonzero()[:, 0]  # same row-major order as the boolean indexing above
+        sums = torch.zeros(len(labels), device=nll.device).index_add_(0, rows, nll)
+        return sums, keep.sum(dim=1)
 
     @torch.no_grad()
     def generate(self, input_ids, attention_mask, pixel_values, **gen_kwargs):
