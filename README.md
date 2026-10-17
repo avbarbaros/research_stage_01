@@ -84,6 +84,7 @@ python scripts/07_plot_loss.py       # -> <run>/loss.png
 python scripts/08_eval_grounding.py  # correct vs shuffled vs blank image
 python scripts/09_eval_captions.py   # 200 COCO val captions + CIDEr
 python scripts/10_show_results.py    # results + <run>/captions_grid.png
+python scripts/11_compare_runs.py RUN_A RUN_B ...  # paired caption comparison, e.g. encoders (E1.2)
 ```
 
 ### Settings
@@ -165,9 +166,13 @@ Used only by `scripts/03_smoke_test.py`; anything not listed here comes from `mo
 | `batch_size` | `16` | |
 | `num_workers` | `4` | DataLoader workers for the grounding control. |
 | `caption_n` | `200` | COCO val2017 images to caption. |
-| `max_new_tokens` | `128` | Generation length for the detailed-description prompt. |
-| `cider` | `true` | Score short captions with CIDEr (simple tokeniser, not comparable to published numbers). |
-| `seed` | `0` | Seed for picking the val images. |
+| `short_max_new_tokens` | `96` | Token limit for the "one short sentence" prompt. At 40, a third of the captions were cut mid-sentence. |
+| `max_new_tokens` | `128` | Token limit for the detailed-description prompt. |
+| `cider` | `true` | Score the short captions with CIDEr (see below). |
+| `bootstrap_samples` | `5000` | Resamples for the 95% intervals on CIDEr. |
+| `seed` | `0` | Seed for picking the val images and for the bootstrap. |
+
+CIDEr is reported three ways, each with a 95% bootstrap interval over images: on the whole short caption, on its first sentence only, and on captions that finished before the token limit. The model writes LLaVA-style paragraphs where COCO references are one sentence, so the whole-caption score mostly measures length; the first-sentence score is the fairer comparison between runs. All three use a simple tokeniser and IDF from the scored images, so they are for comparisons within this project, not with published numbers. `python -m minivlm.eval rescore --out_dir <run>` recomputes them for an existing `captions.json` without a GPU.
 
 ### Underlying modules
 
@@ -176,6 +181,8 @@ python -m minivlm.data                                  # subset + images
 python -m minivlm.train --out_dir runs/main --resume    # train projector
 python -m minivlm.eval grounding --out_dir runs/main    # correct vs shuffled vs blank image
 python -m minivlm.eval caption   --out_dir runs/main
+python -m minivlm.eval rescore   --out_dir runs/main    # recompute caption metrics, no GPU
+python -m minivlm.compare runs/a runs/b --names a b     # paired caption comparison
 pytest tests                                            # CPU, tiny random models
 ```
 
@@ -185,4 +192,5 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
+- [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants and bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
 - [minivlm/train.py](minivlm/train.py), [minivlm/eval.py](minivlm/eval.py), [minivlm/config.py](minivlm/config.py)

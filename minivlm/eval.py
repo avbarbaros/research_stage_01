@@ -2,18 +2,20 @@
 
     python -m minivlm.eval grounding --data_dir /content/data --out_dir <run dir>
     python -m minivlm.eval caption   --data_dir /content/data --out_dir <run dir> --n 50 --cider
+    python -m minivlm.eval rescore   --out_dir <run dir>
 
 grounding: loss on held-out descriptions with the correct image, another
            sample's image, and a blank image. A grounded model has a clearly
            lower loss with the correct image.
-caption:   captions for COCO val2017 images, optionally scored with CIDEr.
+caption:   captions for COCO val2017 images, optionally scored with CIDEr
+           (whole caption, first sentence, finished captions; see metrics.py).
+rescore:   recompute the metrics of an existing captions.json, no GPU needed.
 """
 
 import argparse
 import json
 import os
 import random
-import re
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -25,6 +27,7 @@ from transformers import AutoImageProcessor, AutoTokenizer
 from .config import Config, yaml_from_argv
 from .data import (Collator, LlavaDataset, build_prompt, download_coco_images,
                    load_coco_val_captions, subset_paths)
+from .metrics import caption_metrics, format_metrics
 from .model import MiniVLM
 
 SHORT_PROMPT = "Describe the image in one short sentence."
@@ -80,12 +83,6 @@ def grounding(args, device):
         json.dump(result, f, indent=2)
 
 
-def _simple_tokens(text: str) -> str:
-    # Not the PTB tokeniser used for published COCO numbers, so CIDEr from here
-    # is only comparable to other runs of this script.
-    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
-
-
 @torch.no_grad()
 def caption(args, device):
     cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
@@ -97,10 +94,12 @@ def caption(args, device):
     failed = set(download_coco_images(names, image_dir, split="val2017"))
     names = [n for n in names if n not in failed]
 
-    prompts = {"short": (SHORT_PROMPT, 40), "detail": (DETAIL_PROMPT, args.max_new_tokens)}
+    prompts = {"short": (SHORT_PROMPT, args.short_max_new_tokens),
+               "detail": (DETAIL_PROMPT, args.max_new_tokens)}
     if args.short_only:
         prompts.pop("detail")
     records = {n: dict(image=n, references=refs[n]) for n in names}
+    im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
 
     for key, (question, max_new) in prompts.items():
         # Same prompt for every image, so every row has the same length: no padding.
@@ -114,22 +113,20 @@ def caption(args, device):
                 out = model.generate(
                     input_ids, torch.ones_like(input_ids), pixels,
                     max_new_tokens=max_new, do_sample=False,
-                    eos_token_id=tokenizer.convert_tokens_to_ids("<|im_end|>"),
-                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=im_end, pad_token_id=tokenizer.pad_token_id,
                 )
-            for n, text in zip(chunk, tokenizer.batch_decode(out, skip_special_tokens=True)):
+            # A row that contains <|im_end|> stopped on its own; the rest hit the limit.
+            finished = (out == im_end).any(dim=1).tolist()
+            texts = tokenizer.batch_decode(out, skip_special_tokens=True)
+            for n, text, done in zip(chunk, texts, finished):
                 records[n][key] = text.strip()
+                records[n][f"{key}_finished"] = done
             print(f"{key}: {min(start + args.batch_size, len(names))}/{len(names)}", flush=True)
 
-    result = dict(captions=list(records.values()))
+    result = dict(short_max_new_tokens=args.short_max_new_tokens,
+                  captions=list(records.values()))
     if args.cider:
-        from pycocoevalcap.cider.cider import Cider
-
-        gts = {n: [_simple_tokens(r) for r in records[n]["references"]] for n in names}
-        res = {n: [_simple_tokens(records[n]["short"])] for n in names}
-        score, _ = Cider().compute_score(gts, res)
-        result["cider_short"] = float(score)
-        print(f"CIDEr (short prompt, {len(names)} images, simple tokeniser): {score:.3f}")
+        add_metrics(result, args)
 
     with open(os.path.join(args.out_dir, "captions.json"), "w") as f:
         json.dump(result, f, indent=2)
@@ -137,25 +134,45 @@ def caption(args, device):
         print(f"\n{r['image']}\n  short : {r['short']}\n  ref   : {r['references'][0]}")
 
 
+def add_metrics(result: dict, args):
+    metrics = caption_metrics(result["captions"], args.bootstrap_samples, args.seed)
+    result["metrics"] = metrics
+    result["cider_short"] = metrics["cider"]["mean"]  # kept for older readers
+    print(format_metrics(metrics))
+
+
+def rescore(args, device=None):
+    path = os.path.join(args.out_dir, "captions.json")
+    with open(path) as f:
+        result = json.load(f)
+    add_metrics(result, args)
+    with open(path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"updated {path}")
+
+
 def main():
     parent, y = yaml_from_argv()
     e = y["eval"]
     ap = argparse.ArgumentParser(parents=[parent])
-    ap.add_argument("command", choices=["grounding", "caption"])
+    ap.add_argument("command", choices=["grounding", "caption", "rescore"])
     ap.add_argument("--data_dir", default=y["paths"]["data_dir"])
     ap.add_argument("--subset", default=y["data"]["subset"])
     ap.add_argument("--out_dir", required=True, help="training run directory")
     ap.add_argument("--batch_size", type=int, default=e["batch_size"])
     ap.add_argument("--num_workers", type=int, default=e["num_workers"])
     ap.add_argument("--n", type=int, default=e["caption_n"], help="caption: number of val images")
-    ap.add_argument("--max_new_tokens", type=int, default=e["max_new_tokens"])
+    ap.add_argument("--short_max_new_tokens", type=int, default=e["short_max_new_tokens"])
+    ap.add_argument("--max_new_tokens", type=int, default=e["max_new_tokens"],
+                    help="token limit for the detailed-description prompt")
     ap.add_argument("--short_only", action="store_true")
     ap.add_argument("--cider", action=argparse.BooleanOptionalAction, default=e["cider"])
+    ap.add_argument("--bootstrap_samples", type=int, default=e["bootstrap_samples"])
     ap.add_argument("--seed", type=int, default=e["seed"])
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    {"grounding": grounding, "caption": caption}[args.command](args, device)
+    {"grounding": grounding, "caption": caption, "rescore": rescore}[args.command](args, device)
 
 
 if __name__ == "__main__":

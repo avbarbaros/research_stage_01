@@ -1,4 +1,6 @@
-"""Captions for COCO val2017 images, scored with CIDEr (`eval` section of config.yaml).
+"""Captions for COCO val2017 images, scored with CIDEr (`eval` section of config.yaml):
+whole caption, first sentence only, and finished captions only, each with a 95%
+bootstrap interval.
 
 CIDEr here uses a simple tokeniser, so it is a baseline for E1.2 comparisons,
 not a number comparable to published ones. Extra arguments are passed to

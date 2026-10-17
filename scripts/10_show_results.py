@@ -7,6 +7,8 @@ import textwrap
 
 from _common import DATA, RUN
 
+from minivlm.metrics import format_metrics
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,7 +20,11 @@ grounding_path = os.path.join(RUN, "grounding.json")
 if os.path.exists(grounding_path):
     with open(grounding_path) as f:
         print("grounding loss:", json.load(f))
-print("CIDEr (short prompt):", result.get("cider_short"))
+if "metrics" in result:
+    print(format_metrics(result["metrics"]))
+else:
+    print("CIDEr (short prompt):", result.get("cider_short"),
+          "\n(older captions.json: run `python -m minivlm.eval rescore --out_dir <run>` for all metrics)")
 
 caps = result["captions"][:12]
 fig, axes = plt.subplots(3, 4, figsize=(18, 15))

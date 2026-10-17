@@ -54,6 +54,8 @@ eval:
   batch_size: 16
   num_workers: 4
   caption_n: 200                     # COCO val2017 images to caption
+  short_max_new_tokens: 96           # "one short sentence" prompt; 40 cut off a third of the captions
   max_new_tokens: 128                # for the detailed-description prompt
   cider: true
-  seed: 0
+  bootstrap_samples: 5000            # resamples for the 95% intervals on CIDEr
+  seed: 0                            # image selection and bootstrap
