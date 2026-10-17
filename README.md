@@ -210,6 +210,27 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
+- [e1_3/](e1_3/) — E1.3 resolution sweep: token arithmetic, dataset subsets, VLMEvalKit driver, analysis.
 - [minivlm/benchmarks.py](minivlm/benchmarks.py) — MMVP and A-OKVQA loaders.
 - [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants, likelihood and multiple-choice measures, bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
 - [minivlm/train.py](minivlm/train.py), [minivlm/eval.py](minivlm/eval.py), [minivlm/config.py](minivlm/config.py)
+
+## E1.3 Resolution study (Qwen2.5-VL-7B, VLMEvalKit)
+
+Accuracy of Qwen2.5-VL-7B-Instruct against the number of visual tokens per image, per task category. One visual token covers 28×28 pixels; setting VLMEvalKit's `min_pixels` and `max_pixels` to the same value fixes the token count for every image (`e1_3/tokens.py`). Each budget runs on seeded subsets of three VLMEvalKit datasets, scored by their official evaluators:
+
+- **MMBench_DEV_EN**: multiple choice with circular evaluation, six ability groups (coarse perception, fine-grained perception, reasoning types). Subsets keep each question's rotated copies together.
+- **TextVQA_VAL**: reading text in natural images (VQA score).
+- **ChartQA_TEST**: reading charts (relaxed accuracy).
+
+```bash
+python scripts/15_setup_vlmevalkit.py        # once per runtime: clone, pin, install, import check
+python scripts/16_resolution_quick_check.py  # 2 budgets x 20 questions + estimated time for the full sweep
+python scripts/17_resolution_sweep.py        # full sweep, resumable
+```
+
+`15_setup_vlmevalkit.py` clones VLMEvalKit to `resolution.vlmevalkit_dir`, checks out the tested commit (`resolution.vlmevalkit_commit`), installs it without dependencies, installs its requirements without touching the runtime's torch (one by one if the bulk install fails), adds `rouge-score` (imported by VLMEvalKit but missing from its requirements) and `qwen-vl-utils`, and finishes with an import check that installs any module still missing. `--flash_attn` also tries to install FlashAttention-2; without it the sweep uses PyTorch's SDPA attention (same results, slower).
+
+`16_resolution_quick_check.py` runs the same code on a small sweep (`resolution.quick_check_budgets` and `quick_check_n`, results in `<runs_dir>/<run_name>_check`), prints its analysis, and extrapolates from the measured seconds per answer how many hours the full sweep will take on this GPU.
+
+The full sweep is 6 budgets × (300 MMBench question groups ≈ 1,150 rows + 300 + 300 questions), about 10,500 generations. It ends with `e1_3.analysis`, which prints accuracy with 95% bootstrap intervals per category and budget, marks the point of diminishing returns (the smallest budget not clearly below the best, paired over the same questions), and saves `summary.json` and `resolution_sweep.png` in `<runs_dir>/e1_3_qwen2.5vl7b/`. Budgets, datasets and subset size are in the `resolution` section of `config.yaml`.

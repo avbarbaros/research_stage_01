@@ -59,3 +59,17 @@ eval:
   cider: true
   bootstrap_samples: 5000            # resamples for the 95% intervals on CIDEr
   seed: 0                            # image selection and bootstrap
+
+resolution:                          # E1.3: scripts/15-17
+  vlmevalkit_dir: /content/VLMEvalKit
+  vlmevalkit_commit: 1e5bd63935e2a506d574b9579bb3cae867c4d4bb   # tested version
+  model_path: Qwen/Qwen2.5-VL-7B-Instruct
+  datasets: [MMBench_DEV_EN, TextVQA_VAL, ChartQA_TEST]   # VLMEvalKit names
+  budgets: [64, 144, 256, 576, 1024, 1600]  # visual tokens per image (one token = 28x28 px)
+  n_per_dataset: 300                 # seeded subset per dataset (MMBench: question groups); 0 = all
+  max_new_tokens: 128
+  seed: 0
+  lmu_dir: /content/LMUData          # where VLMEvalKit downloads datasets (local disk)
+  run_name: e1_3_qwen2.5vl7b         # directory inside paths.runs_dir
+  quick_check_budgets: [64, 1024]    # scripts/16_resolution_quick_check.py
+  quick_check_n: 20
