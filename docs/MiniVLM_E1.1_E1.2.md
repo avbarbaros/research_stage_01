@@ -4,7 +4,7 @@
 
 Frozen vision encoder → trainable projector → frozen Qwen2.5-1.5B-Instruct, trained on 50k LLaVA-Instruct samples with COCO images. This document covers the completed main runs (E1.1), the projector-size ablation that closes the E1.1 gate, and the vision-encoder comparison CLIP vs SigLIP vs DINOv2 (E1.2), including every evaluation run on them.
 
-> **Figures.** Two figures are produced by the pipeline and live on Google Drive. Copy them into `docs/figures/` to have them render here: `main_clip_qwen1.5b/loss.png` → `figures/loss_clip.png` (script 07) and `main_clip_qwen1.5b/captions_grid.png` → `figures/captions_grid_clip.png` (script 10). The projector-ablation plot is already in the repository.
+> **E1.3**, the resolution study on Qwen2.5-VL-7B, has its own report: [E1.3_resolution_study.md](E1.3_resolution_study.md).
 
 ---
 
@@ -655,7 +655,7 @@ With a 64- or 16-wide hidden layer the model stops using the image: grounding ga
 The image can sit at a natural place inside the chat template (after "user", wrapped in vision_start/vision_end), and the tokenizer, attention mask and labels are all built on one consistent sequence. `masked_scatter` fills the seats in row-major order, so sample *i*'s seats receive sample *i*'s patches; a unit test checks this.
 
 **Is 256 visual tokens a lot?**
-It is more than half of the 512-position maximum, and these positions carry no loss. Fewer tokens (pooling, a resampler) would be faster; more (higher resolution) would see more detail. E1.3 studies resolution on Qwen2.5-VL.
+It is more than half of the 512-position maximum, and these positions carry no loss. Fewer tokens (pooling, a resampler) would be faster; more (higher resolution) would see more detail. In pixel terms, MiniVLM's 224×224 input equals 64 Qwen2.5-VL tokens; E1.3 shows that is enough for general perception but far too little for reading text or charts ([E1.3 report](E1.3_resolution_study.md)).
 
 **How do you know the model isn't just using the language prior?**
 The grounding control: on unseen images, the same reference text costs 1.64 nats/token with the right image, 1.93 with a grey image, 2.02 with a wrong photo. A-OKVQA gives the same picture from another angle: +16.5 points with the image over the question alone.
@@ -682,12 +682,12 @@ In LLaVA, stage 2 also fine-tunes the LLM (fully or with LoRA) on instruction da
 |---|---|
 | Draw the full forward pass of a modern VLM from memory | §2 provides the material |
 | Trained a projector and know what breaks when it is too small | **done** (§5) |
+| Plot of accuracy against visual token count, point of diminishing returns per task category (E1.3) | **done** ([E1.3 report](E1.3_resolution_study.md)) |
 | Quantitative estimate of the encoder-to-LLM information gap (E1.4) | open |
 | Three architectural decisions where Qwen2.5-VL and InternVL3 diverge | open (reading) |
 
-**Next experiments:**
-1. **E1.3 resolution study:** Qwen2.5-VL-7B at several input resolutions; accuracy against visual token count, per task category.
-2. **E1.4 bottleneck probe:** linear probes on each frozen encoder's features (object count, relative position, for example on CLEVR) against what the VLM reports, using option likelihood. MMVP's below-chance pair accuracy is the motivating example: the encoders were chosen for their image quality, yet the model fails fine distinctions at the pair level.
+**Next experiment:**
+- **E1.4 bottleneck probe:** linear probes on each frozen encoder's features (object count, relative position, for example on CLEVR) against what the VLM reports, using option likelihood. MMVP's below-chance pair accuracy is the motivating example: the encoders were chosen for their image quality, yet the model fails fine distinctions at the pair level.
 
 **Optional follow-ups suggested by these results:**
 - Short captions in training: should shrink the format-prior effect, with SigLIP gaining most on CIDEr (three training runs).
