@@ -93,10 +93,15 @@ def download_coco_images(file_names, image_dir: str, split: str = "train2017",
     return [name for name, good in zip(file_names, ok) if not good]
 
 
-def load_coco_val_captions(data_dir: str) -> dict:
-    """{file_name: [reference captions]} for COCO val2017."""
-    path = os.path.join(data_dir, "captions_val2017.json")
+# Annotation files kept from COCO's 241 MB annotation zip (downloaded once).
+COCO_ANNOTATIONS = ("captions_val2017.json", "instances_val2017.json")
+
+
+def coco_annotation_path(data_dir: str, name: str) -> str:
+    """Path to a COCO val2017 annotation file, downloading the zip if needed."""
+    path = os.path.join(data_dir, name)
     if not os.path.exists(path):
+        os.makedirs(data_dir, exist_ok=True)
         zip_path = os.path.join(data_dir, "annotations_trainval2017.zip")
         with requests.get(f"{COCO_URL}/annotations/annotations_trainval2017.zip",
                           stream=True, timeout=60) as r:
@@ -104,9 +109,19 @@ def load_coco_val_captions(data_dir: str) -> dict:
             with open(zip_path, "wb") as f:
                 for chunk in r.iter_content(1 << 20):
                     f.write(chunk)
-        with zipfile.ZipFile(zip_path) as z, open(path, "wb") as f:
-            f.write(z.read("annotations/captions_val2017.json"))
+        with zipfile.ZipFile(zip_path) as z:
+            for keep in COCO_ANNOTATIONS:
+                target = os.path.join(data_dir, keep)
+                if not os.path.exists(target):
+                    with open(target, "wb") as f:
+                        f.write(z.read(f"annotations/{keep}"))
         os.remove(zip_path)
+    return path
+
+
+def load_coco_val_captions(data_dir: str) -> dict:
+    """{file_name: [reference captions]} for COCO val2017."""
+    path = coco_annotation_path(data_dir, "captions_val2017.json")
     with open(path) as f:
         coco = json.load(f)
     names = {im["id"]: im["file_name"] for im in coco["images"]}

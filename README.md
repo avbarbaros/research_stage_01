@@ -212,6 +212,7 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
 - [e1_3/](e1_3/) — E1.3 resolution sweep: token arithmetic, dataset subsets, VLMEvalKit driver, analysis.
+- [e1_4/](e1_4/) — E1.4 bottleneck probe: COCO task construction across encoder views, linear probes, driver, analysis.
 - [minivlm/benchmarks.py](minivlm/benchmarks.py) — MMVP and A-OKVQA loaders.
 - [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants, likelihood and multiple-choice measures, bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
 - [minivlm/train.py](minivlm/train.py), [minivlm/eval.py](minivlm/eval.py), [minivlm/config.py](minivlm/config.py)
@@ -235,3 +236,27 @@ python scripts/17_resolution_sweep.py        # full sweep, resumable
 `16_resolution_quick_check.py` runs the same code on a small sweep (`resolution.quick_check_budgets` and `quick_check_n`, results in `<runs_dir>/<run_name>_check`), prints its analysis, and extrapolates from the measured seconds per answer how many hours the full sweep will take on this GPU.
 
 The full sweep is 6 budgets × (300 MMBench question groups ≈ 1,150 rows + 300 + 300 questions), about 10,500 generations. It ends with `e1_3.analysis`, which prints accuracy with 95% bootstrap intervals per category and budget, marks the point of diminishing returns (the smallest budget not clearly below the best, paired over the same questions), and saves `summary.json` and `resolution_sweep.png` in `<runs_dir>/e1_3_qwen2.5vl7b/`. Budgets, datasets and subset size are in the `resolution` section of `config.yaml`.
+
+## E1.4 Bottleneck probe (MiniVLM, COCO)
+
+Does MiniVLM report what its frozen vision encoder encodes? For each of the three trained runs (CLIP, SigLIP, DINOv2), a linear probe is trained on the exact patch features the projector receives, and MiniVLM is asked the same questions about the same images by option likelihood. The difference between the two accuracies is the information lost between the encoder and the answer.
+
+Three questions about people, labelled from the COCO val2017 box annotations:
+
+| Task | Question | Options |
+|---|---|---|
+| presence | Is there a person in the image? | Yes / No |
+| count | How many people are in the image? | 0, 1, 2, 3, 4, 5 or more |
+| position | Is the person on the left or the right side of the image? (images with one person) | Left / Right |
+
+Each encoder sees a different part of the image (CLIP and DINOv2 crop the centre, SigLIP squashes the whole image), so labels are computed inside each encoder's view and an image is kept only if its label is unambiguous and identical in all three views. Persons smaller than 1% of the view are not counted, and images with half-visible or borderline-size persons are dropped. Test sets are class-balanced and identical for every encoder; the remaining images train the probes.
+
+- **Probes:** multinomial logistic regression on standardised features, pooled as the mean over all patches and as a 4×4 grid of patch blocks (the grid keeps coarse layout and is the primary probe); the L2 penalty is chosen on a held-out 20% of the training images. A learning curve (16, 64, all training images per class) shows how easily the information can be read out.
+- **MiniVLM:** each option scored as the answer to the question with LLaVA's short-answer prompt, with the real image and with a blank image (the language prior alone).
+- **Output:** per task and encoder, probe and MiniVLM accuracy with 95% bootstrap intervals, the paired gap (probe minus MiniVLM's better score), MiniVLM's answer distribution, and paired comparisons between encoders; `summary.json` and `bottleneck_probe.png` in `<runs_dir>/e1_4_probe/`.
+
+```bash
+python scripts/18_bottleneck_probe.py
+```
+
+It downloads COCO's annotation file and the val2017 images the tasks use, and needs the three trained main runs (`probe.runs` in `config.yaml`). Re-running reuses finished runs and extracted features.

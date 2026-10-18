@@ -73,3 +73,18 @@ resolution:                          # E1.3: scripts/15-17
   run_name: e1_3_qwen2.5vl7b         # directory inside paths.runs_dir
   quick_check_budgets: [64, 1024]    # scripts/16_resolution_quick_check.py
   quick_check_n: 20
+
+probe:                               # E1.4: scripts/18_bottleneck_probe.py
+  runs: [main_clip_qwen1.5b, main_siglip_qwen1.5b, main_dinov2_qwen1.5b]   # inside paths.runs_dir
+  names: [clip, siglip, dinov2]
+  run_name: e1_4_probe               # results directory inside paths.runs_dir
+  category: person                   # COCO category the questions are about
+  plural: people
+  min_area: 0.01                     # objects below 1% of the encoder's view are not counted
+  max_count: 5                       # count options 0-4 and "5 or more"
+  position_margin: 0.1               # left/right only if the centre is outside the middle 20%
+  test_per_class: {presence: 150, count: 50, position: 100}   # capped at half the rarest class
+  train_sizes: [16, 64, 0]           # probe learning curve: training images per class (0 = all)
+  grid: 4                            # grid probe pools the 16x16 patches into 4x4 cells
+  batch_size: 16
+  seed: 0

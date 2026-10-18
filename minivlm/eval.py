@@ -219,47 +219,58 @@ def reference(args, device):
 
 
 @torch.no_grad()
-def options(args, device):
-    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
+def score_options(model, tokenizer, image_processor, cfg, items: list, batch_size: int,
+                  device: str, label: str = "") -> list:
+    """Score every option of every multiple-choice item, with the real and a blank image.
+
+    items: [{id, question, options, answer, image (path or bytes), group}]. Each
+    option is written as the answer to "<question>\n<ANSWER_PROMPT>" in the
+    training chat layout; returns the summed loss of each option.
+    """
     collate = Collator(tokenizer.pad_token_id)
     im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    results = []
+    for start in range(0, len(items), batch_size):
+        chunk = items[start: start + batch_size]
+        seqs, owners = [], []
+        for k, it in enumerate(chunk):
+            pixel_values = image_processor(open_image(it["image"]),
+                                           return_tensors="pt")["pixel_values"][0]
+            for option in it["options"]:
+                ids, labels = encode_conversation(
+                    tokenizer, [{"from": "human", "value": f"{it['question']}\n{ANSWER_PROMPT}"},
+                                {"from": "gpt", "value": option}],
+                    cfg.n_image_tokens, cfg.max_text_tokens)
+                assert [t for t in labels if t != -100][-1] == im_end, option
+                seqs.append(dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels),
+                                 pixel_values=pixel_values))
+                owners.append(k)
+        batch = {k: v.to(device) for k, v in collate(seqs).items()}
+        with autocast(device):
+            nll_image, n_tok, _ = model.sequence_nll(**batch)
+            batch["pixel_values"] = torch.zeros_like(batch["pixel_values"])
+            nll_blank, _, _ = model.sequence_nll(**batch)
+        for k, it in enumerate(chunk):
+            rows = [i for i, o in enumerate(owners) if o == k]
+            results.append(dict(
+                id=it["id"], answer=it["answer"], group=it.get("group"),
+                question=it["question"], options=it["options"],
+                n_tokens=[int(n_tok[i]) for i in rows],
+                nll_image=[float(nll_image[i]) for i in rows],
+                nll_blank=[float(nll_blank[i]) for i in rows]))
+        print(f"{label}: {min(start + batch_size, len(items))}/{len(items)}", flush=True)
+    return results
 
+
+@torch.no_grad()
+def options(args, device):
+    cfg, tokenizer, image_processor, model = load_run(args.out_dir, device)
     for bench in args.benchmarks:
         items = BENCHMARKS[bench]()
         if args.max_items:
             items = items[: args.max_items]
-        results = []
-        for start in range(0, len(items), args.batch_size):
-            chunk = items[start: start + args.batch_size]
-            seqs, owners = [], []
-            for k, it in enumerate(chunk):
-                pixel_values = image_processor(open_image(it["image"]),
-                                               return_tensors="pt")["pixel_values"][0]
-                for option in it["options"]:
-                    # Same chat layout as training; the answer is the option text.
-                    ids, labels = encode_conversation(
-                        tokenizer, [{"from": "human", "value": f"{it['question']}\n{ANSWER_PROMPT}"},
-                                    {"from": "gpt", "value": option}],
-                        cfg.n_image_tokens, cfg.max_text_tokens)
-                    assert [t for t in labels if t != -100][-1] == im_end, option
-                    seqs.append(dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels),
-                                     pixel_values=pixel_values))
-                    owners.append(k)
-            batch = {k: v.to(device) for k, v in collate(seqs).items()}
-            with autocast(device):
-                nll_image, n_tok, _ = model.sequence_nll(**batch)
-                batch["pixel_values"] = torch.zeros_like(batch["pixel_values"])
-                nll_blank, _, _ = model.sequence_nll(**batch)
-            for k, it in enumerate(chunk):
-                rows = [i for i, o in enumerate(owners) if o == k]
-                results.append(dict(
-                    id=it["id"], answer=it["answer"], group=it["group"],
-                    question=it["question"], options=it["options"],
-                    n_tokens=[int(n_tok[i]) for i in rows],
-                    nll_image=[float(nll_image[i]) for i in rows],
-                    nll_blank=[float(nll_blank[i]) for i in rows]))
-            print(f"{bench}: {min(start + args.batch_size, len(items))}/{len(items)}", flush=True)
-
+        results = score_options(model, tokenizer, image_processor, cfg, items,
+                                args.batch_size, device, label=bench)
         summary = options_summary(results, args.bootstrap_samples, args.seed)
         path = os.path.join(args.out_dir, f"options_{bench}.json")
         with open(path, "w") as f:
