@@ -563,6 +563,8 @@ Each encoder has a recognisable profile on these 12 images. SigLIP catches small
 
 **The method lesson.** With a frozen LLM, swapping the encoder (or, §5, the projector) changes the output-format prior as well as the visual information. Generation metrics and absolute likelihood mix the two and can rank encoders backwards. Compare encoders with grounding gaps and option likelihood.
 
+**Update from E1.4.** Argmax option likelihood is itself affected by answer-word preferences. In the [E1.4 bottleneck probe](E1.4_bottleneck_probe.md), CLIP and DINOv2 answered "Yes" to 91–98% of "Is there a person?" questions (52% and 59% accuracy) while ranking the images as well as SigLIP (AUC ≈ 99% for all three); with a per-option offset fitted on 16 images per class all three reach 93–95% and are tied. SigLIP's leads above should therefore be read as "more image information *or* better-calibrated answers"; the grounding gaps and the content-word gap compare losses on fixed text and are not affected, but the MMVP and A-OKVQA accuracies may be. Re-scoring them with a calibrated readout or a threshold-free measure would settle it.
+
 **Caveats:**
 - One seed per encoder. The paired training curves make SigLIP's advantage convincing; small differences such as CLIP vs DINOv2 on held-out loss (0.003) should be confirmed with a second seed.
 - Only the projector is trained, so this measures how *alignable* each encoder is with a frozen LLM. After stage-2 fine-tuning of the LLM, the ranking could change.
@@ -683,11 +685,10 @@ In LLaVA, stage 2 also fine-tunes the LLM (fully or with LoRA) on instruction da
 | Draw the full forward pass of a modern VLM from memory | §2 provides the material |
 | Trained a projector and know what breaks when it is too small | **done** (§5) |
 | Plot of accuracy against visual token count, point of diminishing returns per task category (E1.3) | **done** ([E1.3 report](E1.3_resolution_study.md)) |
-| Quantitative estimate of the encoder-to-LLM information gap (E1.4) | open |
+| Quantitative estimate of the encoder-to-LLM information gap (E1.4) | **done** ([E1.4 report](E1.4_bottleneck_probe.md)) |
 | Three architectural decisions where Qwen2.5-VL and InternVL3 diverge | open (reading) |
 
-**Next experiment:**
-- **E1.4 bottleneck probe:** linear probes on each frozen encoder's features (object count, relative position, for example on CLEVR) against what the VLM reports, using option likelihood. MMVP's below-chance pair accuracy is the motivating example: the encoders were chosen for their image quality, yet the model fails fine distinctions at the pair level.
+**E1.4 result** ([report](E1.4_bottleneck_probe.md)): on COCO presence, count and left/right questions, all three encoders encode the answer equally well. Presence reaches MiniVLM's answer once its "Yes" preference is calibrated away; count is computed inside the LLM but only partly expressed; left/right position stays in the image tokens through all LLM layers but never reaches the answer position, which plausibly explains much of the MMVP failure.
 
 **Optional follow-ups suggested by these results:**
 - Short captions in training: should shrink the format-prior effect, with SigLIP gaining most on CIDEr (three training runs).

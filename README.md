@@ -260,4 +260,6 @@ Each encoder sees a different part of the image (CLIP and DINOv2 crop the centre
 python scripts/18_bottleneck_probe.py
 ```
 
+Results and interpretation: [docs/E1.4_bottleneck_probe.md](docs/E1.4_bottleneck_probe.md).
+
 It downloads COCO's annotation file and the val2017 images the tasks use, and needs the three trained main runs (`probe.runs` in `config.yaml`). Re-running reuses finished runs and extracted encoder features; results written with different tasks or settings are recomputed automatically.
