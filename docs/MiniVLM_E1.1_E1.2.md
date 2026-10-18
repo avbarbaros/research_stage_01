@@ -35,6 +35,8 @@ The codebase builds the smallest complete version of the LLaVA recipe. A pretrai
 4. **SigLIP** gives the frozen LLM the most image-specific information on every format-controlled measure: detailed descriptions, the words of short captions, MMVP fine-grained pairs, and A-OKVQA (tied with CLIP).
 5. With a frozen LLM, swapping the encoder (or the projector) also changes the LLM's **output-format prior**, above all how willing it is to stop after one sentence. Generated-caption metrics and absolute likelihood mix this with visual information; CLIP's lead on short captions is about 70–86% this effect. Grounding gaps and option likelihood separate the two.
 
+**Later results (E1.4).** The [E1.4 bottleneck probe](E1.4_bottleneck_probe.md) ran on these three models. On controlled COCO tasks the encoders carry presence, count and left/right position equally well. Presence reaches the answer once a "Yes" bias is calibrated away, which qualifies finding 4 (see the update in §6.9). Left/right position stays in the image tokens but never reaches the answer, while Qwen2.5-VL-7B routes the same information fully. The resulting candidate thesis problem is in [candidate_thesis_problem.md](candidate_thesis_problem.md).
+
 **What changed since the first write-up** (the PDF guide):
 - *"CIDEr mostly follows caption length"* holds for DINOv2 vs CLIP, but not for SigLIP, which stays clearly last on first sentences (§6.4).
 - The caption-length problem is **verbosity, not truncation**: raising the token limit from 40 to 96 left CIDEr unchanged (§4.3).
