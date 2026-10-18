@@ -88,6 +88,12 @@ probe:                               # E1.4: scripts/18_bottleneck_probe.py
   calib_per_class: 16                # MiniVLM's calibrated readout is fitted on this many training images per class (keep it in train_sizes)
   llm_layers: [0, 7, 14, 21, 28]     # LLM layers to probe; 0 = projector output, 28 = last layer of Qwen2.5-1.5B
   layer_train_per_class: 500         # probe training images per class for the stage probes
+  qwen:                              # scripts/19_bottleneck_probe_qwen.py: same probes on a fully trained VLM
+    model_path: Qwen/Qwen2.5-VL-7B-Instruct
+    name: qwen2.5vl7b                # results_<name>.json in the probe run directory
+    image_size: 448                  # fixed square, 16x16 = 256 visual tokens (as MiniVLM)
+    llm_layers: [0, 7, 14, 21, 28]   # Qwen2.5-7B also has 28 layers; 0 = visual tokens after the merger
+    batch_size: 8                    # sequences per forward pass
   grid: 4                            # grid probe pools the 16x16 patches into 4x4 cells
   batch_size: 16
   seed: 0

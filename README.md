@@ -212,7 +212,7 @@ Defaults come from `config.yaml`; every setting also has a flag (`--help`). Usef
 - [minivlm/model.py](minivlm/model.py) — `MiniVLM`; the tensor shapes at the vision–language interface are listed at the top of the file.
 - [minivlm/data.py](minivlm/data.py) — subset builder, COCO download, chat-format tokenisation and label masking.
 - [e1_3/](e1_3/) — E1.3 resolution sweep: token arithmetic, dataset subsets, VLMEvalKit driver, analysis.
-- [e1_4/](e1_4/) — E1.4 bottleneck probe: COCO task construction across encoder views, linear probes, driver, analysis.
+- [e1_4/](e1_4/) — E1.4 bottleneck probe: COCO task construction across encoder views, linear probes, LLM-stage probes, driver, analysis; `qwen.py` runs the same probes on Qwen2.5-VL.
 - [minivlm/benchmarks.py](minivlm/benchmarks.py) — MMVP and A-OKVQA loaders.
 - [minivlm/metrics.py](minivlm/metrics.py) — CIDEr variants, likelihood and multiple-choice measures, bootstrap intervals; [minivlm/compare.py](minivlm/compare.py) — paired comparison of runs.
 - [minivlm/train.py](minivlm/train.py), [minivlm/eval.py](minivlm/eval.py), [minivlm/config.py](minivlm/config.py)
@@ -261,5 +261,13 @@ python scripts/18_bottleneck_probe.py
 ```
 
 Results and interpretation: [docs/E1.4_bottleneck_probe.md](docs/E1.4_bottleneck_probe.md).
+
+**Same probes on Qwen2.5-VL-7B** (does a fully trained VLM with 2-D M-RoPE positions carry layout to its answer? See [docs/candidate_thesis_problem.md](docs/candidate_thesis_problem.md)):
+
+```bash
+python scripts/19_bottleneck_probe_qwen.py   # after script 18; settings in probe.qwen
+```
+
+It reuses the MiniVLM run's tasks, test images, calibration images and stage-probe images, so every number is directly comparable. Each image is resized to 448×448 (16×16 = 256 visual tokens, like MiniVLM; the squashed view is the one the labels were checked in). The "encoder" stage is Qwen's visual tokens after its patch merger, i.e. the same features as layer 0. Output in the same directory: `results_qwen2.5vl7b.json`, and `summary_qwen2.5vl7b.json`, `bottleneck_probe_qwen2.5vl7b.png`, `information_by_stage_qwen2.5vl7b.png` with the three MiniVLM runs alongside. Needs about 17 GB of GPU memory (bf16), so an L4 is enough.
 
 It downloads COCO's annotation file and the val2017 images the tasks use, and needs the three trained main runs (`probe.runs` in `config.yaml`). Re-running reuses finished runs and extracted encoder features; results written with different tasks or settings are recomputed automatically.

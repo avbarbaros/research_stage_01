@@ -182,13 +182,13 @@ def format_summary(summary: dict, tasks_meta: dict) -> str:
         lines.append(f"\n=== {task}: {meta['question']}  options {meta['options']}")
         lines.append(f"    test: {meta['test_per_class']} per class ({len(meta['test'])} images); "
                      f"probe training: {len(meta['train'])} images")
-        lines.append(f"    {'encoder':10s} {'probe (grid)':>20s} {'probe (mean)':>20s} "
-                     f"{'MiniVLM (sum)':>20s} {'MiniVLM (mean)':>20s} {'no image':>20s}  gap: probe − MiniVLM")
+        lines.append(f"    {'encoder':12s} {'probe (grid)':>20s} {'probe (mean)':>20s} "
+                     f"{'model (sum)':>20s} {'model (mean)':>20s} {'no image':>20s}  gap: probe − model")
         for name, per_task in summary["per_run"].items():
             m = per_task[task]
             blank = max(m["blank_sum"], m["blank_mean"], key=lambda c: c["mean"])
             clear = "clear" if m["gap"]["lo"] > 0 or m["gap"]["hi"] < 0 else "not clear"
-            lines.append(f"    {name:10s} {_pct(m['probe_grid']):>20s} {_pct(m['probe_mean']):>20s} "
+            lines.append(f"    {name:12s} {_pct(m['probe_grid']):>20s} {_pct(m['probe_mean']):>20s} "
                          f"{_pct(m['vlm_sum']):>20s} {_pct(m['vlm_mean']):>20s} {_pct(blank):>20s}  "
                          f"{_pct(m['gap'])} {clear}")
         lines.append(f"    chance {100 * next(iter(summary['per_run'].values()))[task]['chance']:.1f}%")
@@ -196,37 +196,37 @@ def format_summary(summary: dict, tasks_meta: dict) -> str:
             m = per_task[task]
             share = ", ".join(f"{k}: {100 * v:.0f}%" for k, v in m["vlm_prediction_share"].items())
             curve = ", ".join(f"{k}: {100 * v:.1f}" for k, v in m["probe_curve"].items())
-            lines.append(f"    {name:10s} MiniVLM answers ({share}); probe accuracy by training "
+            lines.append(f"    {name:12s} model answers ({share}); probe accuracy by training "
                          f"images per class ({curve})")
         for name, per_task in summary["per_run"].items():
             m = per_task[task]
             parts = []
             if "vlm_calibrated" in m:
                 share = ", ".join(f"{k}: {100 * v:.0f}%" for k, v in m["vlm_calibrated_share"].items())
-                parts.append(f"calibrated MiniVLM {_pct(m['vlm_calibrated'])} ({share})")
+                parts.append(f"calibrated model {_pct(m['vlm_calibrated'])} ({share})")
             if "gap_calibrated" in m:
                 g = m["gap_calibrated"]
                 parts.append(f"probe at {m['probe_grid_small']['per_class']}/class "
                              f"{_pct(m['probe_grid_small'])}, gap {_pct(g)} {_clear(g)}")
             if "auc_vlm" in m:
-                parts.append(f"AUC probe {_pct(m['auc_probe'])}, MiniVLM {_pct(m['auc_vlm'])}"
-                             if "auc_probe" in m else f"AUC MiniVLM {_pct(m['auc_vlm'])}")
+                parts.append(f"AUC probe {_pct(m['auc_probe'])}, model {_pct(m['auc_vlm'])}"
+                             if "auc_probe" in m else f"AUC model {_pct(m['auc_vlm'])}")
             if parts:
-                lines.append(f"    {name:10s} " + "; ".join(parts))
+                lines.append(f"    {name:12s} " + "; ".join(parts))
         for name, per_task in summary["per_run"].items():
             stages = per_task[task].get("stages")
             if stages:
                 if name == next(iter(summary["per_run"])):
                     lines.append("    probe accuracy by stage (same images for every stage):")
-                lines.append(f"    {name:10s} " + "  ".join(
+                lines.append(f"    {name:12s} " + "  ".join(
                     f"{_stage_label(k)} {100 * v['mean']:.1f}" for k, v in stages.items()))
         for pair, ci in summary["pairs"].get(task, {}).items():
             if "probe_grid" in pair or "vlm" in pair:
                 clear = "clear" if ci["lo"] > 0 or ci["hi"] < 0 else ""
                 lines.append(f"      {pair:36s} {_pct(ci)} {clear}")
     lines.append("\nAccuracy in % with 95% bootstrap intervals over the (class-balanced) test images. "
-                 "gap = grid probe minus MiniVLM's better score, paired per image. Calibrated "
-                 "MiniVLM: temperature and per-option offset fitted on a few training images per "
+                 "gap = grid probe minus the model's better score, paired per image. Calibrated "
+                 "model: temperature and per-option offset fitted on a few training images per "
                  "class, compared with the probe trained on as many. Stages: enc = encoder grid "
                  "probe, img Lk = image-token states at LLM layer k (L0 = projector output), "
                  "ans Lk = answer-position state at layer k.")
@@ -242,8 +242,8 @@ def plot(summary: dict, tasks_meta: dict, path: str):
     names = list(summary["per_run"])
     tasks = list(tasks_meta)
     fig, axes = plt.subplots(1, len(tasks), figsize=(4.2 * len(tasks), 3.8), sharey=True)
-    bars = [("probe_grid", "encoder (linear probe)"), (None, "MiniVLM (better score)"),
-            ("vlm_calibrated", "MiniVLM, calibrated"), ("blank", "MiniVLM, no image")]
+    bars = [("probe_grid", "encoder (linear probe)"), (None, "VLM answer (better score)"),
+            ("vlm_calibrated", "VLM answer, calibrated"), ("blank", "VLM answer, no image")]
     if "vlm_calibrated" not in summary["per_run"][names[0]][tasks[0]]:
         bars.pop(2)
     width = 0.8 / len(bars)
@@ -271,7 +271,7 @@ def plot(summary: dict, tasks_meta: dict, path: str):
         ax.grid(axis="y", alpha=0.3)
     axes[0].set_ylabel("accuracy (%)")
     axes[0].legend(fontsize=8, frameon=False, loc="lower left")
-    fig.suptitle("What the encoder encodes vs what MiniVLM reports (dashed: chance)")
+    fig.suptitle("What the encoder encodes vs what the VLM reports (dashed: chance)")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
 
@@ -311,15 +311,15 @@ def plot_stages(summary: dict, tasks_meta: dict, path: str) -> bool:
         ax.grid(alpha=0.3)
     axes[0][0].set_ylabel("linear probe accuracy (%)")
     axes[0][0].legend(fontsize=6, frameon=False, loc="lower left")
-    fig.suptitle("Where the information is lost (L0 = projector output; star: MiniVLM's answer, "
+    fig.suptitle("Where the information is lost (L0 = projector output; star: the VLM's answer, "
                  "calibrated)", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     return True
 
 
-def write(summary: dict, tasks_meta: dict, work_dir: str):
-    with open(os.path.join(work_dir, "summary.json"), "w") as f:
+def write(summary: dict, tasks_meta: dict, work_dir: str, suffix: str = ""):
+    with open(os.path.join(work_dir, f"summary{suffix}.json"), "w") as f:
         json.dump(summary, f, indent=1)
-    plot(summary, tasks_meta, os.path.join(work_dir, "bottleneck_probe.png"))
-    plot_stages(summary, tasks_meta, os.path.join(work_dir, "information_by_stage.png"))
+    plot(summary, tasks_meta, os.path.join(work_dir, f"bottleneck_probe{suffix}.png"))
+    plot_stages(summary, tasks_meta, os.path.join(work_dir, f"information_by_stage{suffix}.png"))

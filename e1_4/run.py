@@ -104,6 +104,16 @@ def layer_probes(stages: dict, encoder_grid: np.ndarray, items: list, n_train: i
     return out
 
 
+def shared_splits(tasks: dict, calib_per_class: int, layer_train_per_class: int, seed: int) -> dict:
+    """Images for the calibrated readout, and for the stage probes (training subset + test),
+    identical for every model."""
+    def sub(meta, n):
+        return [meta["train"][i] for i in subsample_per_class(
+            [it["label"] for it in meta["train"]], n, seed)]
+    return dict(calib={t: sub(m, calib_per_class) for t, m in tasks.items()},
+                layer_items={t: sub(m, layer_train_per_class) + m["test"] for t, m in tasks.items()})
+
+
 def _fingerprint(*parts) -> str:
     return hashlib.sha1(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -172,12 +182,8 @@ def main(argv=None):
     if failed:
         raise SystemExit(f"{len(failed)} val2017 images failed to download; re-run to retry")
     index = {n: i for i, n in enumerate(images)}
-    calib = {t: [m["train"][i] for i in subsample_per_class(
-                 [it["label"] for it in m["train"]], args.calib_per_class, args.seed)]
-             for t, m in tasks.items()}
-    layer_items = {t: [m["train"][i] for i in subsample_per_class(
-                       [it["label"] for it in m["train"]], args.layer_train_per_class, args.seed)]
-                   + m["test"] for t, m in tasks.items()}
+    splits = shared_splits(tasks, args.calib_per_class, args.layer_train_per_class, args.seed)
+    calib, layer_items = splits["calib"], splits["layer_items"]
     fingerprint = _fingerprint(tasks, args.train_sizes, args.calib_per_class, args.llm_layers,
                                args.layer_train_per_class, args.grid, args.seed, 2)
 
