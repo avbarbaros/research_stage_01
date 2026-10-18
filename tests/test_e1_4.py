@@ -36,7 +36,7 @@ def test_labels_in_view_cases():
     centred = labels_in_view([[40, 20, 20, 40]], view, R)
     assert centred["position"] is None and centred["count"] == 1
     six = labels_in_view([[i * 15, 10, 12, 30] for i in range(6)], view, R)
-    assert six["count"] == 5 and six["position"] is None              # "5 or more"
+    assert six["count"] == 3 and six["position"] is None              # "3 or more"
     cut = labels_in_view([[90, 10, 40, 40]], view, R)                  # 25% inside the view
     assert cut == dict(presence=None, count=None, position=None)
     tiny = labels_in_view([[10, 10, 4, 4]], view, R)                   # 0.16% of the view
@@ -73,7 +73,7 @@ def test_balanced_split_and_build_tasks():
     inst = dict(images=images, annotations=anns, categories=[dict(id=1, name="person")])
     tasks = build_tasks(inst, "person", "people", [CLIP, DINO, SIGLIP], R,
                         dict(presence=20, count=10, position=10), seed=0)
-    assert tasks["count"]["options"][-1] == "5 or more"
+    assert tasks["count"]["options"] == ["0", "1", "2", "3 or more"]
     assert tasks["presence"]["test_per_class"] == 20
     assert tasks["position"]["question"].startswith("Is the person")
 
@@ -124,3 +124,67 @@ def test_real_processor_geometries():
     except OSError as err:  # offline
         pytest.skip(str(err))
     assert got == [CLIP, DINO, SIGLIP]
+
+
+def test_probe_chooses_penalty_by_balanced_accuracy():
+    from e1_4.probe import balanced_accuracy
+    y = torch.tensor([0] * 8 + [1] * 2)
+    assert balanced_accuracy(torch.zeros(10, dtype=torch.long), y, 2) == 0.5  # majority guess
+    assert balanced_accuracy(y.clone(), y, 2) == 1.0
+
+
+def test_option_bias_removes_a_fixed_preference():
+    from e1_4.analysis import auc, calibrated_predictions, fit_option_bias
+    rng = random.Random(0)
+    items = []
+    for i in range(200):
+        a = i % 2
+        # option 1 always costs 3 nats more, but the image moves it by 1 nat
+        nll = [2.0 + rng.gauss(0, 0.3), 5.0 - (2.0 if a == 1 else 0.0) + rng.gauss(0, 0.3)]
+        items.append(dict(nll_image=nll, answer=a))
+    raw = [int(min(range(2), key=it["nll_image"].__getitem__) == it["answer"]) for it in items]
+    assert sum(raw) / len(raw) == 0.5                      # always option 0
+    t, off = fit_option_bias(items[:32])
+    pred = calibrated_predictions(items[32:], t, off)
+    acc = sum(p == it["answer"] for p, it in zip(pred, items[32:])) / len(pred)
+    assert acc > 0.9
+    score = [it["nll_image"][0] - it["nll_image"][1] for it in items]
+    assert auc(score, [it["answer"] for it in items]) > 0.95
+    assert auc([0, 0, 1, 1], [0, 0, 1, 1]) == 1.0 and auc([1, 1, 1, 1], [0, 1, 0, 1]) == 0.5
+
+
+def test_llm_states_shapes_and_projector_stage():
+    from transformers import AutoTokenizer, CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModel
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from types import SimpleNamespace
+    from PIL import Image
+    from e1_4.llm_probe import llm_states, stage_names
+    from minivlm.model import MiniVLM
+    try:
+        tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    except Exception:
+        pytest.skip("tokenizer not available")
+    torch.manual_seed(0)
+    vision = CLIPVisionModel(CLIPVisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=2,
+                                              num_attention_heads=2, image_size=56, patch_size=14))
+    llm = Qwen2ForCausalLM(Qwen2Config(vocab_size=len(tok), hidden_size=48, intermediate_size=96,
+                                       num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2))
+    model = MiniVLM(vision, llm, tok.convert_tokens_to_ids("<|image_pad|>"), n_image_tokens=16).eval()
+    proc = CLIPImageProcessor(size={"shortest_edge": 56}, crop_size={"height": 56, "width": 56})
+    cfg = SimpleNamespace(n_image_tokens=16, max_text_tokens=256)
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        for i in range(3):
+            Image.new("RGB", (80, 60), (60 * i, 0, 0)).save(os.path.join(d, f"{i}.jpg"))
+        out = llm_states(model, tok, proc, cfg, "Is there a person?", ["0.jpg", "1.jpg", "2.jpg"],
+                         d, [0, 2], 2, 2, "cpu")
+        assert list(out) == stage_names([0, 2])
+        assert out["img_L0"].shape == (3, 4 * 48) and out["last_L2"].shape == (3, 48)
+        # layer 0 image tokens are the projector output, pooled to the grid
+        pix = proc(Image.open(os.path.join(d, "1.jpg")).convert("RGB"), return_tensors="pt")["pixel_values"]
+        with torch.no_grad():
+            proj = model.projector(model.encode_image(pix))
+        assert torch.allclose(pool(proj, 2)["grid"].half().float(),
+                              torch.from_numpy(out["img_L0"][1]).float(), atol=1e-2)
+        with pytest.raises(ValueError):
+            llm_states(model, tok, proc, cfg, "q", ["0.jpg"], d, [5], 2, 2, "cpu")

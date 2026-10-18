@@ -9,9 +9,11 @@ position and counting need. A grid probe can represent anything the mean probe
 can (the mean is the average of the grid cells), so it is the primary probe.
 
 The probe is multinomial logistic regression on standardised features, with an
-L2 penalty chosen on a stratified 20% validation part of the training split,
-then refit on the whole training split. Classes are weighted so each counts
-equally, matching the balanced test sets.
+L2 penalty chosen by balanced accuracy (mean per-class recall) on a stratified
+20% validation part of the training split, then refit on the whole training
+split. Classes are weighted so each counts equally, matching the balanced test
+sets; plain accuracy on the imbalanced validation part would reward predicting
+the majority class.
 """
 
 import math
@@ -56,6 +58,11 @@ def _fit(x: torch.Tensor, y: torch.Tensor, n_classes: int, weight_decay: float,
     return w.detach(), b.detach()
 
 
+def balanced_accuracy(pred: torch.Tensor, y: torch.Tensor, n_classes: int) -> float:
+    recalls = [float((pred[y == c] == c).float().mean()) for c in range(n_classes) if (y == c).any()]
+    return sum(recalls) / len(recalls)
+
+
 def _stratified_holdout(y: list, share: float, seed: int) -> tuple:
     rng = random.Random(seed)
     train, val = [], []
@@ -86,13 +93,16 @@ class LinearProbe:
             for wd in WEIGHT_DECAYS:
                 w, b = _fit(xs[tr], yt[tr], self.n_classes, wd)
                 pred = (xs[va] @ w + b).argmax(dim=1)
-                self.val_accuracy[wd] = float((pred == yt[va]).float().mean())
+                self.val_accuracy[wd] = balanced_accuracy(pred, yt[va], self.n_classes)
             self.weight_decay = max(WEIGHT_DECAYS, key=lambda wd: (self.val_accuracy[wd], wd))
         self.w, self.b = _fit(xs, yt, self.n_classes, self.weight_decay)
         return self
 
+    def logits(self, x: torch.Tensor) -> torch.Tensor:
+        return (x.float() - self.mu) / self.sd @ self.w + self.b
+
     def predict(self, x: torch.Tensor) -> list:
-        return ((x.float() - self.mu) / self.sd @ self.w + self.b).argmax(dim=1).tolist()
+        return self.logits(x).argmax(dim=1).tolist()
 
 
 def subsample_per_class(y: list, per_class: int, seed: int = 0) -> list:

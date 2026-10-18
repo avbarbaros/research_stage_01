@@ -2,7 +2,7 @@
 
 Three tasks, for a category such as "person":
     presence  Is there a person in the image?                   Yes / No
-    count     How many people are in the image?                 0 … 4, "5 or more"
+    count     How many people are in the image?                 0, 1, 2, "3 or more"
     position  Is the person on the left or the right side?      Left / Right (one person only)
 
 Each encoder sees a different part of the image: CLIP resizes the short side to
@@ -22,7 +22,7 @@ TASK_NAMES = ("presence", "count", "position")
 @dataclass
 class LabelRules:
     min_area: float = 0.01          # objects smaller than this share of the view are not counted
-    max_count: int = 5              # last count class is "max_count or more"
+    max_count: int = 3              # last count class is "max_count or more"
     position_margin: float = 0.1    # left if centre < 0.5 - margin, right if > 0.5 + margin
     min_visible: float = 0.5        # share of an object's box inside the view needed to count it
 

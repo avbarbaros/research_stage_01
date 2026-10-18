@@ -246,17 +246,18 @@ Three questions about people, labelled from the COCO val2017 box annotations:
 | Task | Question | Options |
 |---|---|---|
 | presence | Is there a person in the image? | Yes / No |
-| count | How many people are in the image? | 0, 1, 2, 3, 4, 5 or more |
+| count | How many people are in the image? | 0, 1, 2, 3 or more |
 | position | Is the person on the left or the right side of the image? (images with one person) | Left / Right |
 
 Each encoder sees a different part of the image (CLIP and DINOv2 crop the centre, SigLIP squashes the whole image), so labels are computed inside each encoder's view and an image is kept only if its label is unambiguous and identical in all three views. Persons smaller than 1% of the view are not counted, and images with half-visible or borderline-size persons are dropped. Test sets are class-balanced and identical for every encoder; the remaining images train the probes.
 
-- **Probes:** multinomial logistic regression on standardised features, pooled as the mean over all patches and as a 4×4 grid of patch blocks (the grid keeps coarse layout and is the primary probe); the L2 penalty is chosen on a held-out 20% of the training images. A learning curve (16, 64, all training images per class) shows how easily the information can be read out.
-- **MiniVLM:** each option scored as the answer to the question with LLaVA's short-answer prompt, with the real image and with a blank image (the language prior alone).
-- **Output:** per task and encoder, probe and MiniVLM accuracy with 95% bootstrap intervals, the paired gap (probe minus MiniVLM's better score), MiniVLM's answer distribution, and paired comparisons between encoders; `summary.json` and `bottleneck_probe.png` in `<runs_dir>/e1_4_probe/`.
+- **Probes:** multinomial logistic regression on standardised features, pooled as the mean over all patches and as a 4×4 grid of patch blocks (the grid keeps coarse layout and is the primary probe); the L2 penalty is chosen by balanced accuracy on a held-out 20% of the training images. A learning curve (16, 64, all training images per class) shows how easily the information can be read out.
+- **MiniVLM:** each option scored as the answer to the question with LLaVA's short-answer prompt, with the real image and with a blank image (the language prior alone). Read out three ways: raw (lowest loss); calibrated (a temperature and per-option offset fitted on 16 training images per class, which removes a fixed preference such as "always Yes" and is compared with the probe trained on 16 images per class); and, for the yes/no and left/right tasks, AUC of the loss difference, which needs no threshold.
+- **Stages:** linear probes on the projector output and on the frozen LLM's hidden states at layers 0, 7, 14, 21, 28 (`probe.llm_layers`): the 256 image-token states pooled to the same 4×4 grid, and the state at the answer position, with the task's question in the prompt. All stages use the same images (up to 500 training images per class), so the curve shows where a property stops being linearly readable.
+- **Output:** per task and encoder, probe and MiniVLM accuracy with 95% bootstrap intervals, the paired gaps (raw, and calibrated at 16 images per class), AUCs, MiniVLM's answer distribution, probe accuracy by stage, and paired comparisons between encoders; `summary.json`, `bottleneck_probe.png` and `information_by_stage.png` in `<runs_dir>/e1_4_probe/`.
 
 ```bash
 python scripts/18_bottleneck_probe.py
 ```
 
-It downloads COCO's annotation file and the val2017 images the tasks use, and needs the three trained main runs (`probe.runs` in `config.yaml`). Re-running reuses finished runs and extracted features.
+It downloads COCO's annotation file and the val2017 images the tasks use, and needs the three trained main runs (`probe.runs` in `config.yaml`). Re-running reuses finished runs and extracted encoder features; results written with different tasks or settings are recomputed automatically.
